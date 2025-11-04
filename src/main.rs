@@ -2,6 +2,7 @@ mod api;
 mod drive;
 mod events;
 mod logging;
+mod tasks;
 
 use anyhow::{Context, Result};
 use api::{AppState, create_router};
@@ -9,6 +10,7 @@ use drive::manager::DriveManager;
 use events::EventBroadcaster;
 use logging::LogConfig;
 use std::sync::Arc;
+use tasks::{TaskManager, TaskManagerConfig};
 use tokio::signal;
 use tower_http::trace::TraceLayer;
 
@@ -35,10 +37,19 @@ async fn main() -> Result<()> {
     let event_broadcaster = EventBroadcaster::new(100);
     tracing::info!(target: "main", "Event broadcasting system initialized");
 
+    // Initialize TaskManager
+    let task_config = TaskManagerConfig {
+        max_workers: 4,
+        completed_buffer_size: 100,
+    };
+    let task_manager = TaskManager::new(task_config);
+    tracing::info!(target: "main", "Task manager initialized");
+
     // Create application state
     let state = AppState {
         drive_manager: drive_manager.clone(),
         event_broadcaster: event_broadcaster.clone(),
+        task_manager: task_manager.clone(),
     };
 
     // Create router with middleware
@@ -62,6 +73,7 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal(
             drive_manager.clone(),
             event_broadcaster.clone(),
+            task_manager.clone(),
         ))
         .await
         .context("Server error")?;
@@ -72,7 +84,11 @@ async fn main() -> Result<()> {
 }
 
 /// Wait for shutdown signal and perform cleanup
-async fn shutdown_signal(drive_manager: Arc<DriveManager>, event_broadcaster: EventBroadcaster) {
+async fn shutdown_signal(
+    drive_manager: Arc<DriveManager>,
+    event_broadcaster: EventBroadcaster,
+    task_manager: Arc<TaskManager>,
+) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -106,6 +122,11 @@ async fn shutdown_signal(drive_manager: Arc<DriveManager>, event_broadcaster: Ev
 
     // Give clients time to receive the disconnection event
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Shutdown task manager
+    tracing::info!(target: "main", "Shutting down task manager...");
+    task_manager.shutdown().await;
+    tracing::info!(target: "main", "Task manager shutdown complete");
 
     // Persist drive state
     tracing::info!(target: "main", "Persisting drive configurations...");

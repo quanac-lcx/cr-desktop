@@ -81,17 +81,8 @@ pub fn init_logging(config: LogConfig) -> Result<LogGuard> {
     let (non_blocking_file, worker_guard) = tracing_appender::non_blocking(file_appender);
 
     // Configure environment filter with defaults
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(
-            "cloudreve_sync=info,\
-             api=info,\
-             drive=info,\
-             events=info,\
-             main=info,\
-             tower_http=debug,\
-             axum=info",
-        )
-    });
+    // Show all log levels from all components by default
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("trace"));
 
     // Create file layer (JSON format for structured logging)
     let file_layer = fmt::layer()
