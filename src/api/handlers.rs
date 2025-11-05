@@ -82,18 +82,16 @@ pub async fn add_drive(
 ) -> Result<Json<ApiResponse<DriveConfig>>, AppError> {
     let drive_id = uuid::Uuid::new_v4().to_string();
     tracing::info!(target: "api::drives", drive_id = %drive_id, name = %req.name, "Adding new drive");
+    let mut config = DriveConfig::default();
 
-    let config = DriveConfig {
-        id: None,
-        instance_url: req.instance_url,
-        remote_path: req.remote_path,
-        name: req.name.clone(),
-        sync_path: req.sync_path.into(),
-        enabled: req.enabled,
-        extra: req.extra,
-        credentials: req.credentials,
-        icon_path: None,
-    };
+    config.id = Some(drive_id.clone());
+    config.instance_url = req.instance_url;
+    config.remote_path = req.remote_path;
+    config.name = req.name.clone();
+    config.sync_path = req.sync_path.into();
+    config.enabled = req.enabled;
+    config.extra = req.extra;
+    config.credentials = req.credentials;
 
     state.drive_manager.add_drive(config.clone()).await?;
 

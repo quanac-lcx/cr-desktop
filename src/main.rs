@@ -1,8 +1,10 @@
 mod api;
+mod cfapi;
 mod drive;
 mod events;
 mod logging;
 mod tasks;
+mod shellext;
 
 use anyhow::{Context, Result};
 use api::{AppState, create_router};
@@ -37,6 +39,17 @@ async fn main() -> Result<()> {
     let event_broadcaster = EventBroadcaster::new(100);
     tracing::info!(target: "main", "Event broadcasting system initialized");
 
+     // Initialize and start the shell services (context menu handler) in a separate thread
+     let mut shell_service = shellext::shell_service::init_and_start_service_task(drive_manager.clone());
+    
+     // Wait for shell services to initialize
+     if let Err(e) = shell_service.wait_for_init() {
+         tracing::error!(target: "main", "Warning: Failed to initialize shell services: {:?}", e);
+         tracing::info!(target: "main", "Continuing without context menu handler...\n");
+     } else {
+         tracing::info!(target: "main", "Context menu handler initialized successfully!\n");
+     }
+
     // Initialize TaskManager
     let task_config = TaskManagerConfig {
         max_workers: 4,
@@ -56,7 +69,7 @@ async fn main() -> Result<()> {
     let app = create_router(state).layer(TraceLayer::new_for_http());
 
     // Bind to address
-    let addr = "127.0.0.1:3000";
+    let addr = "0.0.0.0:3000";
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .context(format!("Failed to bind to {}", addr))?;

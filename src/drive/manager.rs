@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{RwLock};
 
 use super::mounts::{DriveConfig, Mount};
 
@@ -88,23 +88,23 @@ impl DriveManager {
     /// Persist drive configurations to disk
     pub async fn persist(&self) -> Result<()> {
         let config_file = self.get_config_file();
-        let mut write_guard = self.drives.write().await;
+        let write_guard = self.drives.write().await;
 
         tracing::debug!(target: "drive", path = %config_file.display(), count = write_guard.len(), "Persisting drive configurations");
 
-        let mut newState = DriveState::default();
+        let mut new_state = DriveState::default();
 
         // Update drive states from underlying mounts
         for (id, mount) in write_guard.iter() {
             let config = mount.get_config();
-            newState.drives.insert(id.clone(), config);
+            new_state.drives.insert(id.clone(), config);
         }
 
         let content =
-            serde_json::to_string_pretty(&newState).context("Failed to serialize drive state")?;
+            serde_json::to_string_pretty(&new_state).context("Failed to serialize drive state")?;
         fs::write(&config_file, content).context("Failed to write drive config file")?;
 
-        tracing::info!(target: "drive", count = newState.drives.len(), "Persisted drive(s) to config");
+        tracing::info!(target: "drive", count = new_state.drives.len(), "Persisted drive(s) to config");
 
         Ok(())
     }
@@ -131,7 +131,7 @@ impl DriveManager {
         }
 
         let mut write_guard = self.drives.write().await;
-        let mount = Mount::new(config.clone());
+        let mut mount = Mount::new(config.clone());
         if let Err(e) = mount.start().await {
             tracing::error!(target: "drive", error = %e, "Failed to start drive");
             return Err(e).context("Failed to start drive");
@@ -212,8 +212,8 @@ impl DriveManager {
     }
 
     pub async fn shutdown(&self) {
-        let mut write_guard = self.drives.write().await;
-        for (id, mount) in write_guard.iter() {
+        let write_guard = self.drives.write().await;
+        for (_, mount) in write_guard.iter() {
             mount.shutdown().await;
         }
         tracing::info!(target: "drive", "All drives shutdown");
