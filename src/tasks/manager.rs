@@ -99,9 +99,9 @@ impl TaskManager {
             task_info.status = result.status.clone();
             task_info.completed_at = Some(std::time::SystemTime::now());
 
-            if let Some(error) = result.error {
-                task_info.error = Some(error);
-            }
+            // Store error and result data from execution result
+            task_info.error = result.execution_result.error.clone();
+            task_info.result_data = result.execution_result.result_data.clone();
 
             // Add to completed tasks buffer
             let mut completed = self.completed_tasks.lock().await;
@@ -117,6 +117,7 @@ impl TaskManager {
                 target: "tasks::manager",
                 task_id = %result.task_id,
                 status = ?result.status,
+                has_result_data = result.execution_result.result_data.is_some(),
                 "Task result processed"
             );
         }
@@ -207,6 +208,8 @@ impl TaskManager {
         priority: TaskPriority,
         properties: TaskProperties,
     ) -> Result<TaskId, String> {
+        use super::models::TaskExecutionResult;
+        
         // Create a simple default executor
         let executor: TaskExecutor = Arc::new(|props| {
             Box::pin(async move {
@@ -219,7 +222,7 @@ impl TaskManager {
                     p.progress = (i + 1) as f32 / 10.0;
                 }
 
-                Ok(())
+                TaskExecutionResult::ok()
             })
         });
 

@@ -1,6 +1,6 @@
 use crate::tasks::{
-    TaskCallback, TaskExecutor, TaskFilter, TaskId, TaskInfo, TaskPriority, TaskProperties,
-    TaskStatistics, TaskType,
+    TaskCallback, TaskExecutionResult, TaskExecutor, TaskFilter, TaskId, TaskInfo, TaskPriority, 
+    TaskProperties, TaskStatistics, TaskType,
 };
 use axum::{
     Json,
@@ -9,10 +9,8 @@ use axum::{
 };
 use axum_macros::debug_handler;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread;
 
 use super::{ApiResponse, AppError, AppState};
 
@@ -262,7 +260,7 @@ fn create_task_callback(
     event_broadcaster: crate::events::EventBroadcaster,
     task_type: TaskType,
 ) -> TaskCallback {
-    Arc::new(move |task_id: TaskId, status, error: Option<String>| {
+    Arc::new(move |task_id: TaskId, status, execution_result: TaskExecutionResult| {
         let broadcaster = event_broadcaster.clone();
         let task_type = task_type.clone();
         Box::pin(async move {
@@ -270,7 +268,8 @@ fn create_task_callback(
                 "task_id": task_id,
                 "task_type": task_type,
                 "status": status,
-                "error": error,
+                "error": execution_result.error,
+                "result_data": execution_result.result_data,
             });
             broadcaster.custom_event("task_completed".to_string(), payload);
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
@@ -312,7 +311,9 @@ fn create_executor_for_task(task_type: &TaskType, state: &AppState) -> TaskExecu
             }
 
             tracing::info!(target: "tasks::executor", task_type = ?task_type, "Task execution completed");
-            Ok(())
+            
+            // Return success with optional custom result data
+            TaskExecutionResult::ok()
         })
     })
 }

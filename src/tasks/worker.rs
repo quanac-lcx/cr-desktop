@@ -1,4 +1,4 @@
-use super::models::{Task, TaskId, TaskStatus};
+use super::models::{Task, TaskExecutionResult, TaskId, TaskStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -12,11 +12,11 @@ pub enum WorkerMessage {
     Shutdown,
 }
 
-/// Result of task execution
+/// Result of task execution with custom result data
 pub struct TaskResult {
     pub task_id: TaskId,
     pub status: TaskStatus,
-    pub error: Option<String>,
+    pub execution_result: TaskExecutionResult,
 }
 
 /// Worker pool that manages task execution
@@ -52,26 +52,22 @@ impl WorkerPool {
                             tracing::info!(target: "tasks::worker", task_id = %task_id, "Starting task execution");
 
                             // Execute the task
-                            let result = (task.executor)(task.properties.clone()).await;
+                            let execution_result = (task.executor)(task.properties.clone()).await;
 
-                            // Send result
-                            let task_result = match result {
-                                Ok(_) => {
-                                    tracing::info!(target: "tasks::worker", task_id = %task_id, "Task completed successfully");
-                                    TaskResult {
-                                        task_id: task_id.clone(),
-                                        status: TaskStatus::Completed,
-                                        error: None,
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!(target: "tasks::worker", task_id = %task_id, error = %e, "Task failed");
-                                    TaskResult {
-                                        task_id: task_id.clone(),
-                                        status: TaskStatus::Failed,
-                                        error: Some(e),
-                                    }
-                                }
+                            // Determine task status based on execution result
+                            let status = if execution_result.success {
+                                tracing::info!(target: "tasks::worker", task_id = %task_id, "Task completed successfully");
+                                TaskStatus::Completed
+                            } else {
+                                tracing::error!(target: "tasks::worker", task_id = %task_id, error = ?execution_result.error, "Task failed");
+                                TaskStatus::Failed
+                            };
+
+                            // Create task result
+                            let task_result = TaskResult {
+                                task_id: task_id.clone(),
+                                status: status.clone(),
+                                execution_result: execution_result.clone(),
                             };
 
                             // Execute callback if present
@@ -79,7 +75,7 @@ impl WorkerPool {
                                 callback(
                                     task_result.task_id.clone(),
                                     task_result.status.clone(),
-                                    task_result.error.clone(),
+                                    execution_result,
                                 )
                                 .await;
                             }

@@ -7,6 +7,42 @@ use tokio::sync::RwLock;
 
 pub type TaskId = String;
 
+/// Result of task execution with optional custom result data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskExecutionResult {
+    /// Whether the task succeeded
+    pub success: bool,
+    /// Error message if task failed
+    pub error: Option<String>,
+    /// Custom result data (JSON value for flexibility)
+    pub result_data: Option<serde_json::Value>,
+}
+
+impl TaskExecutionResult {
+    /// Create a successful result with optional data
+    pub fn success(result_data: Option<serde_json::Value>) -> Self {
+        Self {
+            success: true,
+            error: None,
+            result_data,
+        }
+    }
+
+    /// Create a failed result with error message
+    pub fn failure(error: String) -> Self {
+        Self {
+            success: false,
+            error: Some(error),
+            result_data: None,
+        }
+    }
+
+    /// Create a successful result without data (for backwards compatibility)
+    pub fn ok() -> Self {
+        Self::success(None)
+    }
+}
+
 /// Task priority levels (higher value = higher priority)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TaskPriority {
@@ -108,17 +144,17 @@ impl TaskProperties {
     }
 }
 
-/// Task execution function type
+/// Task execution function type - now returns TaskExecutionResult for custom results
 pub type TaskExecutor = Arc<
     dyn Fn(Arc<RwLock<TaskProperties>>) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+            Box<dyn std::future::Future<Output = TaskExecutionResult> + Send>,
         > + Send
         + Sync,
 >;
 
-/// Task completion callback type
+/// Task completion callback type - now receives TaskExecutionResult
 pub type TaskCallback = Arc<
-    dyn Fn(TaskId, TaskStatus, Option<String>) -> std::pin::Pin<
+    dyn Fn(TaskId, TaskStatus, TaskExecutionResult) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = ()> + Send>,
         > + Send
         + Sync,
@@ -142,6 +178,8 @@ pub struct Task {
     pub completed_at: Option<SystemTime>,
     /// Error message (if failed)
     pub error: Option<String>,
+    /// Custom execution result data
+    pub result_data: Option<serde_json::Value>,
     /// Task executor function
     pub(crate) executor: TaskExecutor,
     /// Optional completion callback
@@ -164,6 +202,7 @@ impl Task {
             started_at: None,
             completed_at: None,
             error: None,
+            result_data: None,
             executor,
             callback: None,
         }
@@ -186,6 +225,7 @@ impl Task {
             started_at: self.started_at,
             completed_at: self.completed_at,
             error: self.error.clone(),
+            result_data: self.result_data.clone(),
         }
     }
 }
@@ -201,6 +241,7 @@ pub struct TaskInfo {
     pub started_at: Option<SystemTime>,
     pub completed_at: Option<SystemTime>,
     pub error: Option<String>,
+    pub result_data: Option<serde_json::Value>,
 }
 
 /// Filter for searching tasks
