@@ -117,6 +117,11 @@ async fn shutdown_signal(
 
     tracing::info!(target: "main", "🛑 Shutting down gracefully...");
 
+    // Shutdown drive manager
+    tracing::info!(target: "main", "Shutting down drive manager...");
+    drive_manager.shutdown().await;
+    tracing::trace!(target: "main", "Drive manager shutdown complete");
+
     // Broadcast disconnection event
     event_broadcaster.connection_status_changed(false);
 
@@ -126,7 +131,7 @@ async fn shutdown_signal(
     // Shutdown task manager
     tracing::info!(target: "main", "Shutting down task manager...");
     task_manager.shutdown().await;
-    tracing::info!(target: "main", "Task manager shutdown complete");
+    tracing::trace!(target: "main", "Task manager shutdown complete");
 
     // Persist drive state
     tracing::info!(target: "main", "Persisting drive configurations...");

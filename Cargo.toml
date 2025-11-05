@@ -17,6 +17,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 tracing-appender = "0.2"
 tower-http = { version = "0.5", features = ["trace", "cors"] }
 futures = "0.3"
+reqwest = { version = "0.11", features = ["json"] }
+sha2 = "0.10"
+image = "0.24"
+url = "2.5"
 
 [dependencies.uuid]
 version = "1.6"

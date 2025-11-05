@@ -4,18 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DriveConfig {
-    pub id: String,
-    pub name: String,
-    pub drive_type: String,
-    pub sync_path: PathBuf,
-    pub enabled: bool,
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
-}
+use super::mounts::{DriveConfig, Mount};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriveState {
@@ -31,7 +22,7 @@ impl Default for DriveState {
 }
 
 pub struct DriveManager {
-    state: Arc<RwLock<DriveState>>,
+    drives: Arc<RwLock<HashMap<String, Mount>>>,
     config_dir: PathBuf,
 }
 
@@ -47,8 +38,8 @@ impl DriveManager {
         }
 
         Ok(Self {
-            state: Arc::new(RwLock::new(DriveState::default())),
             config_dir,
+            drives: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -80,10 +71,16 @@ impl DriveManager {
         let state: DriveState =
             serde_json::from_str(&content).context("Failed to parse drive config")?;
 
-        let mut write_guard = self.state.write().await;
-        *write_guard = state;
+        // Add drives to manager
+        let mut count = 0;
+        for (id, config) in state.drives.iter() {
+            self.add_drive(config.clone())
+                .await
+                .context(format!("Failed to add drive: {}", id))?;
+            count += 1;
+        }
 
-        tracing::info!(target: "drive", count = write_guard.drives.len(), "Loaded drive(s) from config");
+        tracing::info!(target: "drive", count = count, "Loaded drive(s) from config");
 
         Ok(())
     }
@@ -91,51 +88,86 @@ impl DriveManager {
     /// Persist drive configurations to disk
     pub async fn persist(&self) -> Result<()> {
         let config_file = self.get_config_file();
-        let read_guard = self.state.read().await;
+        let mut write_guard = self.drives.write().await;
 
-        tracing::debug!(target: "drive", path = %config_file.display(), count = read_guard.drives.len(), "Persisting drive configurations");
+        tracing::debug!(target: "drive", path = %config_file.display(), count = write_guard.len(), "Persisting drive configurations");
 
-        let content = serde_json::to_string_pretty(&*read_guard)
-            .context("Failed to serialize drive state")?;
+        let mut newState = DriveState::default();
 
+        // Update drive states from underlying mounts
+        for (id, mount) in write_guard.iter() {
+            let config = mount.get_config();
+            newState.drives.insert(id.clone(), config);
+        }
+
+        let content =
+            serde_json::to_string_pretty(&newState).context("Failed to serialize drive state")?;
         fs::write(&config_file, content).context("Failed to write drive config file")?;
 
-        tracing::info!(target: "drive", count = read_guard.drives.len(), "Persisted drive(s) to config");
+        tracing::info!(target: "drive", count = newState.drives.len(), "Persisted drive(s) to config");
 
         Ok(())
     }
 
     /// Add a new drive
-    pub async fn add_drive(&self, config: DriveConfig) -> Result<String> {
-        let mut write_guard = self.state.write().await;
-        let id = config.id.clone();
-        write_guard.drives.insert(id.clone(), config);
+    pub async fn add_drive(&self, mut config: DriveConfig) -> Result<String> {
+        // Fetch favicon if icon_path is not set or doesn't exist
+        if config.icon_path.is_none()
+            || !config
+                .icon_path
+                .as_ref()
+                .map(|p| std::path::Path::new(p).exists())
+                .unwrap_or(false)
+        {
+            match super::favicon::fetch_and_save_favicon(&config.instance_url).await {
+                Ok(path) => {
+                    tracing::info!(target: "drive", icon_path = %path, "Favicon fetched successfully");
+                    config.icon_path = Some(path);
+                }
+                Err(e) => {
+                    tracing::warn!(target: "drive", error = %e, "Failed to fetch favicon, continuing without icon");
+                }
+            }
+        }
+
+        let mut write_guard = self.drives.write().await;
+        let mount = Mount::new(config.clone());
+        if let Err(e) = mount.start().await {
+            tracing::error!(target: "drive", error = %e, "Failed to start drive");
+            return Err(e).context("Failed to start drive");
+        }
+
+        let id = mount.id();
+        write_guard.insert(id.clone(), mount);
         Ok(id)
     }
 
     /// Remove a drive by ID
     pub async fn remove_drive(&self, id: &str) -> Result<Option<DriveConfig>> {
-        let mut write_guard = self.state.write().await;
-        Ok(write_guard.drives.remove(id))
+        let mut write_guard = self.drives.write().await;
+        Ok(write_guard.remove(id).map(|mount| mount.get_config()))
     }
 
     /// Get a drive by ID
     pub async fn get_drive(&self, id: &str) -> Option<DriveConfig> {
-        let read_guard = self.state.read().await;
-        read_guard.drives.get(id).cloned()
+        let read_guard = self.drives.read().await;
+        read_guard.get(id).map(|mount| mount.get_config())
     }
 
     /// List all drives
     pub async fn list_drives(&self) -> Vec<DriveConfig> {
-        let read_guard = self.state.read().await;
-        read_guard.drives.values().cloned().collect()
+        let read_guard = self.drives.read().await;
+        read_guard
+            .values()
+            .map(|mount| mount.get_config())
+            .collect()
     }
 
     /// Update drive configuration
     pub async fn update_drive(&self, id: &str, config: DriveConfig) -> Result<()> {
-        let mut write_guard = self.state.write().await;
-        if write_guard.drives.contains_key(id) {
-            write_guard.drives.insert(id.to_string(), config);
+        let mut write_guard = self.drives.write().await;
+        if write_guard.contains_key(id) {
+            write_guard.insert(id.to_string(), Mount::new(config.clone()));
             Ok(())
         } else {
             anyhow::bail!("Drive not found: {}", id)
@@ -144,9 +176,9 @@ impl DriveManager {
 
     /// Enable/disable a drive
     pub async fn set_drive_enabled(&self, id: &str, enabled: bool) -> Result<()> {
-        let mut write_guard = self.state.write().await;
-        if let Some(drive) = write_guard.drives.get_mut(id) {
-            drive.enabled = enabled;
+        let mut write_guard = self.drives.write().await;
+        if let Some(drive) = write_guard.get_mut(id) {
+            drive.get_config().enabled = enabled;
             Ok(())
         } else {
             anyhow::bail!("Drive not found: {}", id)
@@ -177,5 +209,13 @@ impl DriveManager {
             "last_sync": null,
             "files_synced": 0,
         }))
+    }
+
+    pub async fn shutdown(&self) {
+        let mut write_guard = self.drives.write().await;
+        for (id, mount) in write_guard.iter() {
+            mount.shutdown().await;
+        }
+        tracing::info!(target: "drive", "All drives shutdown");
     }
 }

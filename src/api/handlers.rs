@@ -1,4 +1,4 @@
-use crate::drive::manager::DriveConfig;
+use crate::drive::mounts::{Credentials, DriveConfig};
 use axum::{
     Json,
     extract::{Path, State},
@@ -12,8 +12,10 @@ use super::{ApiResponse, AppError, AppState};
 #[derive(Debug, Deserialize)]
 pub struct AddDriveRequest {
     pub name: String,
-    pub drive_type: String,
     pub sync_path: String,
+    pub instance_url: String,
+    pub remote_path: String,
+    pub credentials: Credentials,
     #[serde(default)]
     pub enabled: bool,
     #[serde(flatten)]
@@ -82,15 +84,25 @@ pub async fn add_drive(
     tracing::info!(target: "api::drives", drive_id = %drive_id, name = %req.name, "Adding new drive");
 
     let config = DriveConfig {
-        id: drive_id.clone(),
+        id: None,
+        instance_url: req.instance_url,
+        remote_path: req.remote_path,
         name: req.name.clone(),
-        drive_type: req.drive_type,
         sync_path: req.sync_path.into(),
         enabled: req.enabled,
         extra: req.extra,
+        credentials: req.credentials,
+        icon_path: None,
     };
 
     state.drive_manager.add_drive(config.clone()).await?;
+
+    // Get the updated config with icon_path
+    let updated_config = state
+        .drive_manager
+        .get_drive(&drive_id)
+        .await
+        .unwrap_or(config);
 
     // Persist changes
     state.drive_manager.persist().await?;
@@ -101,7 +113,7 @@ pub async fn add_drive(
         .drive_added(drive_id.clone(), req.name);
 
     tracing::info!(target: "api::drives", drive_id = %drive_id, "Drive added successfully");
-    Ok(Json(ApiResponse::success(config)))
+    Ok(Json(ApiResponse::success(updated_config)))
 }
 
 /// Update a drive

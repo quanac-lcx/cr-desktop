@@ -1,5 +1,5 @@
 use crate::tasks::{
-    TaskCallback, TaskExecutionResult, TaskExecutor, TaskFilter, TaskId, TaskInfo, TaskPriority, 
+    TaskCallback, TaskExecutionResult, TaskExecutor, TaskFilter, TaskId, TaskInfo, TaskPriority,
     TaskProperties, TaskStatistics, TaskType,
 };
 use axum::{
@@ -260,20 +260,22 @@ fn create_task_callback(
     event_broadcaster: crate::events::EventBroadcaster,
     task_type: TaskType,
 ) -> TaskCallback {
-    Arc::new(move |task_id: TaskId, status, execution_result: TaskExecutionResult| {
-        let broadcaster = event_broadcaster.clone();
-        let task_type = task_type.clone();
-        Box::pin(async move {
-            let payload = serde_json::json!({
-                "task_id": task_id,
-                "task_type": task_type,
-                "status": status,
-                "error": execution_result.error,
-                "result_data": execution_result.result_data,
-            });
-            broadcaster.custom_event("task_completed".to_string(), payload);
-        }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-    })
+    Arc::new(
+        move |task_id: TaskId, status, execution_result: TaskExecutionResult| {
+            let broadcaster = event_broadcaster.clone();
+            let task_type = task_type.clone();
+            Box::pin(async move {
+                let payload = serde_json::json!({
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "status": status,
+                    "error": execution_result.error,
+                    "result_data": execution_result.result_data,
+                });
+                broadcaster.custom_event("task_completed".to_string(), payload);
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        },
+    )
 }
 
 fn create_executor_for_task(task_type: &TaskType, state: &AppState) -> TaskExecutor {
@@ -311,7 +313,7 @@ fn create_executor_for_task(task_type: &TaskType, state: &AppState) -> TaskExecu
             }
 
             tracing::info!(target: "tasks::executor", task_type = ?task_type, "Task execution completed");
-            
+
             // Return success with optional custom result data
             TaskExecutionResult::ok()
         })
