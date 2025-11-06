@@ -28,6 +28,7 @@ widestring = "1.0.2"
 flagset = "0.4.5"
 memoffset = "0.9.1"
 chrono = "0.4.42"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dependencies.windows]
 version = "0.58.0"
@@ -62,3 +63,6 @@ windows = { version = "0.58.0", features = ["Win32_Foundation"] }
 [dependencies.uuid]
 version = "1.6"
 features = ["v4", "serde"]
+
+[dev-dependencies]
+tempfile = "3.8"

@@ -2,6 +2,7 @@ mod api;
 mod cfapi;
 mod drive;
 mod events;
+mod inventory;
 mod logging;
 mod tasks;
 mod shellext;
