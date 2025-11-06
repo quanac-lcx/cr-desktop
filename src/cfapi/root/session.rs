@@ -62,6 +62,7 @@ impl Session {
     {
         let filter = Arc::new(filter);
         let callbacks = filter::callbacks::<F>();
+        tracing::trace!(target: "cfapi::root::session", "CfConnectSyncRoot enter");
         let key = unsafe {
             CfConnectSyncRoot(
                 PCWSTR(
@@ -81,13 +82,8 @@ impl Session {
             )
         }?;
 
-        let (cancel_token, join_handle) =
-            spawn_root_watcher(path.as_ref().to_path_buf(), filter.clone());
-
         Ok(Connection::new(
             key.0,
-            cancel_token,
-            join_handle,
             callbacks,
             filter,
         ))

@@ -1,6 +1,6 @@
 use std::{
-    sync::{mpsc::Sender, Arc},
-    thread::{self, JoinHandle},
+    sync::{Arc},
+    thread::{self},
     time::Duration,
 };
 
@@ -13,12 +13,10 @@ use crate::cfapi::filter::{Callbacks, RawConnectionKey};
 /// [Connection] will disconnect when dropped. Note that this
 /// does **NOT** mean the sync root will be unregistered. To do so, call
 /// [SyncRootId::unregister][crate::root::SyncRootId::unregister].
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Connection<F> {
     connection_key: RawConnectionKey,
 
-    cancel_token: Sender<()>,
-    join_handle: JoinHandle<()>,
 
     _callbacks: Callbacks,
     filter: Arc<F>,
@@ -29,15 +27,11 @@ pub struct Connection<F> {
 impl<T> Connection<T> {
     pub(crate) fn new(
         connection_key: RawConnectionKey,
-        cancel_token: Sender<()>,
-        join_handle: JoinHandle<()>,
         callbacks: Callbacks,
         filter: Arc<T>,
     ) -> Self {
         Self {
             connection_key,
-            cancel_token,
-            join_handle,
             _callbacks: callbacks,
             filter,
         }
@@ -52,15 +46,8 @@ impl<T> Connection<T> {
     pub fn filter(&self) -> &T {
         &self.filter
     }
-}
 
-impl<T> Drop for Connection<T> {
-    fn drop(&mut self) {
+    pub fn disconnect(&self) {
         unsafe { CfDisconnectSyncRoot(CF_CONNECTION_KEY(self.connection_key)) }.unwrap();
-
-        _ = self.cancel_token.send(());
-        while !self.join_handle.is_finished() {
-            thread::sleep(Duration::from_millis(150));
-        }
     }
 }

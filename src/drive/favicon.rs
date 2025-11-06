@@ -54,7 +54,8 @@ pub async fn fetch_and_save_favicon(instance_url: &str) -> Result<String> {
     // Generate SHA256 hash of hostname:port
     let mut hasher = Sha256::new();
     hasher.update(host_with_port.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
+    let hash_hex = format!("{:x}", hasher.finalize());
+    let hash = &hash_hex[..16];
 
     // Get icons directory
     let icons_dir = get_icons_dir()?;

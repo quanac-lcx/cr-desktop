@@ -1,4 +1,4 @@
-use std::{future::Future, mem::MaybeUninit, ops::Deref, path::PathBuf};
+use std::{future::Future, mem::MaybeUninit, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::cfapi::{
     error::{CResult, CloudErrorKind},
@@ -178,6 +178,7 @@ where
         ticket: ticket::FetchData,
         info: info::FetchData,
     ) -> CResult<()> {
+        tracing::trace!(target: "cfapi::filter::async_filter", "FetchData enter");
         let mut ret = MaybeUninit::zeroed();
         (self.block_on)(Box::pin(async {
             ret.write(self.filter.fetch_data(request, ticket, info).await);
@@ -187,6 +188,7 @@ where
     }
 
     fn cancel_fetch_data(&self, request: Request, info: info::CancelFetchData) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "CancelFetchData enter");
         (self.block_on)(Box::pin(self.filter.cancel_fetch_data(request, info)))
     }
 
@@ -196,6 +198,7 @@ where
         ticket: ticket::ValidateData,
         info: info::ValidateData,
     ) -> CResult<()> {
+        tracing::trace!(target: "cfapi::filter::async_filter", "ValidateData enter");
         let mut ret = MaybeUninit::zeroed();
         (self.block_on)(Box::pin(async {
             ret.write(self.filter.validate_data(request, ticket, info).await);
@@ -210,6 +213,7 @@ where
         ticket: ticket::FetchPlaceholders,
         info: info::FetchPlaceholders,
     ) -> CResult<()> {
+        tracing::trace!(target: "cfapi::filter::async_filter", "FetchPlaceholders enter");
         let mut ret = MaybeUninit::zeroed();
         (self.block_on)(Box::pin(async {
             ret.write(self.filter.fetch_placeholders(request, ticket, info).await);
@@ -219,16 +223,19 @@ where
     }
 
     fn cancel_fetch_placeholders(&self, request: Request, info: info::CancelFetchPlaceholders) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "CancelFetchPlaceholders enter");
         (self.block_on)(Box::pin(
             self.filter.cancel_fetch_placeholders(request, info),
         ))
     }
 
     fn opened(&self, request: Request, info: info::Opened) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Opened enter");
         (self.block_on)(Box::pin(self.filter.opened(request, info)))
     }
 
     fn closed(&self, request: Request, info: info::Closed) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Closed enter");
         (self.block_on)(Box::pin(self.filter.closed(request, info)))
     }
 
@@ -238,6 +245,7 @@ where
         ticket: ticket::Dehydrate,
         info: info::Dehydrate,
     ) -> CResult<()> {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Dehydrate enter");
         let mut ret = MaybeUninit::zeroed();
         (self.block_on)(Box::pin(async {
             ret.write(self.filter.dehydrate(request, ticket, info).await);
@@ -247,10 +255,12 @@ where
     }
 
     fn dehydrated(&self, request: Request, info: info::Dehydrated) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Dehydrated enter");
         (self.block_on)(Box::pin(self.filter.dehydrated(request, info)))
     }
 
     fn delete(&self, request: Request, ticket: ticket::Delete, info: info::Delete) -> CResult<()> {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Delete enter");
         let mut ret = MaybeUninit::zeroed();
         (self.block_on)(Box::pin(async {
             ret.write(self.filter.delete(request, ticket, info).await);
@@ -260,10 +270,12 @@ where
     }
 
     fn deleted(&self, request: Request, info: info::Deleted) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Deleted enter");
         (self.block_on)(Box::pin(self.filter.deleted(request, info)))
     }
 
     fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Rename enter");
         let mut ret = MaybeUninit::zeroed();
         (self.block_on)(Box::pin(async {
             ret.write(self.filter.rename(request, ticket, info).await);
@@ -273,10 +285,12 @@ where
     }
 
     fn renamed(&self, request: Request, info: info::Renamed) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "Renamed enter");
         (self.block_on)(Box::pin(self.filter.renamed(request, info)))
     }
 
     fn state_changed(&self, changes: Vec<PathBuf>) {
+        tracing::trace!(target: "cfapi::filter::async_filter", "StateChanged enter");
         (self.block_on)(Box::pin(self.filter.state_changed(changes)))
     }
 }
