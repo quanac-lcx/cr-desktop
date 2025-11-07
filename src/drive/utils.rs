@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use cloudreve_api::models::uri::CrUri;
 use url::Url;
 
-use crate::{drive::mounts::DriveConfig, inventory::FileMetadata};
+use crate::drive::mounts::DriveConfig;
 
 pub fn local_path_to_cr_uri(path: PathBuf, root: PathBuf, remote_base: String) -> Result<CrUri> {
     let mut base = CrUri::new(&remote_base)?;
@@ -48,34 +48,28 @@ pub fn remote_path_to_local_relative_path(
     Ok(PathBuf::from(relative_path))
 }
 
-pub fn view_folder_online_url(remote_path: &str, config: &DriveConfig) -> Result<String> {
-    // parse
+/// Generate a URL to view a folder or file online.
+///
+/// For folders: pass the folder path as `folder_path` and None for `open_file`
+/// For files: pass the parent folder path as `folder_path` and the file path as `open_file`
+pub fn view_online_url(
+    folder_path: &str,
+    open_file: Option<&str>,
+    config: &DriveConfig,
+) -> Result<String> {
     let mut base = config.instance_url.parse::<Url>()?;
     base.set_path("/home");
 
-    // set query `path` to remote_path,
     {
         let mut query = base.query_pairs_mut();
-        query.append_pair("path", remote_path);
-    }
-    Ok(base.to_string())
-}
+        query.append_pair("path", folder_path);
 
-pub fn view_file_online_url(file_meta: &FileMetadata, config: &DriveConfig) -> Result<String> {
-    let mut base = config.instance_url.parse::<Url>()?;
-    base.set_path("/home");
-    // set query `path` to remote_path,
-    {
-        let mut query = base.query_pairs_mut();
-        query
-            .append_pair(
-                "path",
-                CrUri::new(&file_meta.remote_uri)?
-                    .parent()?
-                    .to_string()
-                    .as_str(),
-            )
-            .append_pair("open", file_meta.remote_uri.as_str());
+        if let Some(file) = open_file {
+            query.append_pair("open", file);
+        }
+
+        query.append_pair("user_hint", config.user_id.as_str());
     }
+
     Ok(base.to_string())
 }

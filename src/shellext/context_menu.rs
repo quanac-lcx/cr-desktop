@@ -15,7 +15,7 @@ use windows::{
 
 use crate::drive::commands::ManagerCommand;
 use crate::drive::manager::DriveManager;
-use tokio::sync::oneshot;
+use windows::ApplicationModel;
 
 // UUID for our context menu handler - matches the C++ implementation
 const CLSID_TEST_EXPLORER_COMMAND: GUID = GUID::from_u128(0x165cd069_d9c8_42b4_8e37_b6971afa4494);
@@ -23,14 +23,26 @@ const CLSID_TEST_EXPLORER_COMMAND: GUID = GUID::from_u128(0x165cd069_d9c8_42b4_8
 #[implement(IExplorerCommand)]
 pub struct TestExplorerCommandHandler {
     drive_manager: Arc<DriveManager>,
+    images_path: String,
     #[allow(dead_code)]
     site: std::sync::Mutex<Option<IUnknown>>,
+}
+
+pub fn get_images_path() -> Result<String> {
+    Ok(format!(
+        "{}\\Images",
+        ApplicationModel::Package::Current()?
+            .InstalledLocation()?
+            .Path()?
+            .to_string(),
+    ))
 }
 
 impl TestExplorerCommandHandler {
     pub fn new(drive_manager: Arc<DriveManager>) -> Self {
         Self {
             drive_manager,
+            images_path: get_images_path().unwrap_or_default(),
             site: std::sync::Mutex::new(None),
         }
     }
@@ -43,7 +55,9 @@ impl IExplorerCommand_Impl for TestExplorerCommandHandler_Impl {
     }
 
     fn GetIcon(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {
-        Err(Error::from(E_NOTIMPL))
+        let icon_path = format!("{}\\web.svg", self.images_path);
+        let hstring = HSTRING::from(icon_path);
+        unsafe { SHStrDupW(&hstring) }
     }
 
     fn GetToolTip(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {

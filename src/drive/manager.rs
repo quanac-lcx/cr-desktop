@@ -1,6 +1,6 @@
 use super::commands::ManagerCommand;
 use super::mounts::{DriveConfig, Mount};
-use crate::drive::utils::{view_file_online_url, view_folder_online_url};
+use crate::drive::utils::view_online_url;
 use crate::inventory::InventoryDb;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -317,9 +317,13 @@ impl DriveManager {
         // Determine which URL to open
         let url = match file_meta {
             // If no metadata, assume it's the sync root, open folder
-            None => view_folder_online_url(&config.remote_path, &config)?,
-            Some(ref meta) if meta.is_folder => view_folder_online_url(&meta.remote_uri, &config)?,
-            Some(ref meta) => view_file_online_url(meta, &config)?,
+            None => view_online_url(&config.remote_path, None, &config)?,
+            Some(ref meta) if meta.is_folder => view_online_url(&meta.remote_uri, None, &config)?,
+            Some(ref meta) => {
+                use cloudreve_api::models::uri::CrUri;
+                let parent_path = CrUri::new(&meta.remote_uri)?.parent()?.to_string();
+                view_online_url(&parent_path, Some(&meta.remote_uri), &config)?
+            }
         };
 
         open::that(url)?;

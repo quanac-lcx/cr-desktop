@@ -56,6 +56,7 @@ features = [
     "Win32_System_Search",
     "Storage_Streams",
     "Win32_System_Ioctl",
+    "ApplicationModel_Core",
 ]
 
 [build-dependencies]
