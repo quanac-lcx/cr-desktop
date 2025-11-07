@@ -1,0 +1,160 @@
+use std::time::Duration;
+
+use crate::{
+    cfapi::{
+        error::{CResult, CloudErrorKind},
+        filter::{Request, SyncFilter, info, ticket},
+        placeholder_file::PlaceholderFile,
+    },
+    drive::{commands::MountCommand, mounts::DriveConfig, sync::cloud_file_to_placeholder},
+};
+use tokio::sync::mpsc;
+
+#[derive(Clone)]
+pub struct CallbackHandler {
+    config: DriveConfig,
+    command_tx: mpsc::UnboundedSender<MountCommand>,
+}
+
+impl CallbackHandler {
+    pub fn new(config: DriveConfig, command_tx: mpsc::UnboundedSender<MountCommand>) -> Self {
+        Self { config, command_tx }
+    }
+
+    pub fn id(&self) -> String {
+        self.config
+            .id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    }
+
+    pub async fn sleep(&self) {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+impl SyncFilter for CallbackHandler {
+    fn fetch_data(
+        &self,
+        request: crate::cfapi::filter::Request,
+        ticket: crate::cfapi::filter::ticket::FetchData,
+        info: crate::cfapi::filter::info::FetchData,
+    ) -> crate::cfapi::error::CResult<()> {
+        todo!()
+    }
+
+    fn deleted(&self, request: Request, _info: info::Deleted) {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), "Deleted");
+    }
+
+    fn delete(&self, request: Request, ticket: ticket::Delete, info: info::Delete) -> CResult<()> {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), "Delete");
+        ticket.pass().unwrap();
+        Ok(())
+    }
+
+    fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
+        let src = request.path();
+        let dest = info.target_path();
+        tracing::debug!(target: "drive::mounts", id = %self.id(), source_path = %src.display(), target_path = %dest.display(), "Rename");
+        Err(CloudErrorKind::NotSupported)
+    }
+
+    fn fetch_placeholders(
+        &self,
+        request: Request,
+        ticket: ticket::FetchPlaceholders,
+        info: info::FetchPlaceholders,
+    ) -> CResult<()> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let command = MountCommand::FetchPlaceholders {
+            path: request.path().to_path_buf(),
+            response: response_tx,
+        };
+        if let Err(e) = self.command_tx.send(command) {
+            tracing::error!(target: "drive::mounts", id = %self.id(), error = %e, "Failed to send FetchPlaceholders command");
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        match response_rx.blocking_recv() {
+            Ok(Ok(files)) => {
+                tracing::debug!(target: "drive::mounts", id = %self.id(), files = %files.files.len(), "Received placeholders");
+                let mut placeholders = files.files.iter()
+                    .map(|file| cloud_file_to_placeholder(file, &files.local_path, &files.remote_path))
+                    .filter_map(|result|{
+                        if result.is_ok() {
+                            Some(result.unwrap())
+                        } else {
+                            tracing::error!(target: "drive::mounts", id = %self.id(), error = %result.unwrap_err(), "Failed to convert cloud file to placeholder");
+                            None
+                        }
+                    })
+                    .collect::<Vec<PlaceholderFile>>();
+                if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
+                    tracing::error!(target: "drive::mounts", id = %self.id(), error = %e, "Failed to pass placeholders");
+                    return Err(CloudErrorKind::Unsuccessful);
+                }
+                tracing::debug!(target: "drive::mounts", id = %self.id(), placeholders = %placeholders.len(), "Passed placeholders");
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        Err(CloudErrorKind::Unsuccessful)
+    }
+
+    fn closed(&self, request: Request, info: info::Closed) {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), deleted = %info.deleted(), "Closed");
+    }
+
+    fn cancel_fetch_data(&self, _request: Request, _info: info::CancelFetchData) {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), "CancelFetchData");
+    }
+
+    fn validate_data(
+        &self,
+        request: Request,
+        ticket: ticket::ValidateData,
+        info: info::ValidateData,
+    ) -> CResult<()> {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), "ValidateData");
+        Err(CloudErrorKind::NotSupported)
+    }
+
+    fn cancel_fetch_placeholders(&self, request: Request, info: info::CancelFetchPlaceholders) {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), "CancelFetchPlaceholders");
+    }
+
+    fn opened(&self, request: Request, _info: info::Opened) {
+        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), "Opened");
+    }
+
+    fn dehydrate(
+        &self,
+        request: Request,
+        ticket: ticket::Dehydrate,
+        info: info::Dehydrate,
+    ) -> CResult<()> {
+        tracing::debug!(
+            target: "drive::mounts",
+            id = %self.id(),
+            reason = ?info.reason(),
+            "Dehydrate"
+        );
+        Err(CloudErrorKind::NotSupported)
+    }
+
+    fn dehydrated(&self, _request: Request, info: info::Dehydrated) {
+        tracing::debug!(
+            target: "drive::mounts",
+            id = %self.id(),
+            reason = ?info.reason(),
+            "Dehydrated"
+        );
+    }
+
+    fn renamed(&self, _request: Request, info: info::Renamed) {
+        let dest = info.source_path();
+        tracing::debug!(target: "drive::mounts", id = %self.id(), dest_path = %dest.display(), "Renamed");
+    }
+}

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{RwLock};
+use tokio::sync::RwLock;
 
 use super::mounts::{DriveConfig, Mount};
 
@@ -137,10 +137,10 @@ impl DriveManager {
             return Err(e).context("Failed to start drive");
         }
 
-        let mountArc = Arc::new(mount);
-        mountArc.spawn_command_processor(mountArc.clone()).await;
-        let id = mountArc.id().await;
-        write_guard.insert(id.clone(), mountArc);
+        let mount_arc = Arc::new(mount);
+        mount_arc.spawn_command_processor(mount_arc.clone()).await;
+        let id = mount_arc.id().await;
+        write_guard.insert(id.clone(), mount_arc);
         Ok(id)
     }
 

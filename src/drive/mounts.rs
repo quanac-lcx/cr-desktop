@@ -1,54 +1,22 @@
-use crate::{
-    cfapi::{
-        error::{CResult, CloudErrorKind}, filter::{Filter, Request, SyncFilter, info, ticket}, placeholder_file::PlaceholderFile, root::{
-            Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId,
-            SyncRootIdBuilder, SyncRootInfo,
-        }
-    },
-    drive::{interop::GetPlacehodlerResult, sync::cloud_file_to_placeholder, utils::local_path_to_cr_uri},
+use crate::cfapi::root::{
+    Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
+    SyncRootInfo,
 };
+use crate::drive::callback::CallbackHandler;
+use crate::drive::commands::MountCommand;
+use crate::tasks::{TaskManager, TaskManagerConfig};
 use ::serde::{Deserialize, Serialize};
 use anyhow::{Context, Result};
-use cloudreve_api::{Client, ClientConfig, api::explorer::ExplorerApiExt, models::{explorer::FileResponse, user::Token}};
+use cloudreve_api::{Client, ClientConfig, models::user::Token};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
-use tokio::sync::{Mutex, RwLock, mpsc, oneshot::{
-    Sender, Receiver,
-}};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use url::Url;
 use windows::Storage::Provider::StorageProviderSyncRootManager;
-
-use crate::tasks::{TaskManager, TaskManagerConfig};
-
-const PAGE_SIZE: i32 = 1000;
-
-/// Messages sent from OS threads (SyncFilter callbacks) to the async processing task
-///
-/// # Safety
-/// This is safe because Windows CFAPI callbacks are designed to be invoked from arbitrary threads
-/// and the data contained in Request, ticket, and info types are meant to be passed between threads
-/// during the callback's lifetime.
-#[derive(Debug)]
-pub enum MountCommand {
-    FetchPlaceholders {
-        path: PathBuf,
-        response: Sender<Result<GetPlacehodlerResult>>,
-    },
-    RefreshCredentials {
-        credentials: Token,
-    },
-}
-
-// SAFETY: Windows CFAPI is designed to allow callbacks from arbitrary threads.
-// The Request, ticket, and info types contain data that is valid for the duration
-// of the callback and can be safely transferred between threads.
-unsafe impl Send for MountCommand {}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DriveConfig {
     pub id: Option<String>,
@@ -78,12 +46,12 @@ pub struct Credentials {
 
 pub struct Mount {
     queue: Arc<TaskManager>,
-    config: Arc<RwLock<DriveConfig>>,
+    pub config: Arc<RwLock<DriveConfig>>,
     connection: Option<Connection<CallbackHandler>>,
     command_tx: mpsc::UnboundedSender<MountCommand>,
     command_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<MountCommand>>>>,
     processor_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    cr_client: Arc<Client>,
+    pub cr_client: Arc<Client>,
 }
 
 impl Mount {
@@ -96,13 +64,19 @@ impl Mount {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         // initialize the client with the credentials
         let client_config = ClientConfig::new(config.instance_url.clone());
-        let mut cr_client  = Client::new(client_config);
-        cr_client.set_tokens_with_expiry(&Token {
-            access_token: config.credentials.access_token.clone().unwrap_or_default(),
-            refresh_token: config.credentials.refresh_token.clone(),
-            access_expires: config.credentials.access_expires.clone().unwrap_or_default(),
-            refresh_expires: config.credentials.refresh_expires.clone(),
-        }).await;
+        let mut cr_client = Client::new(client_config);
+        cr_client
+            .set_tokens_with_expiry(&Token {
+                access_token: config.credentials.access_token.clone().unwrap_or_default(),
+                refresh_token: config.credentials.refresh_token.clone(),
+                access_expires: config
+                    .credentials
+                    .access_expires
+                    .clone()
+                    .unwrap_or_default(),
+                refresh_expires: config.credentials.refresh_expires.clone(),
+            })
+            .await;
         let command_tx_clone = command_tx.clone();
         // Setup hooks to update the credentials in the config
         cr_client.set_on_credential_refreshed(Arc::new(move |token| {
@@ -143,11 +117,16 @@ impl Mount {
         // if sync root id is not set, generate one
         if write_guard.sync_root_id.is_none() {
             write_guard.sync_root_id = Some(
-                generate_sync_root_id(&write_guard.instance_url, &write_guard.name, &write_guard.user_id, &write_guard.sync_path)
-                    .context("failed to generate sync root id")?,
+                generate_sync_root_id(
+                    &write_guard.instance_url,
+                    &write_guard.name,
+                    &write_guard.user_id,
+                    &write_guard.sync_path,
+                )
+                .context("failed to generate sync root id")?,
             );
         }
-        
+
         drop(write_guard);
         let config = self.config.read().await;
 
@@ -305,194 +284,4 @@ fn generate_sync_root_id(
         .build();
 
     Ok(sync_root_id)
-}
-
-#[derive(Clone)]
-pub struct CallbackHandler {
-    config: DriveConfig,
-    command_tx: mpsc::UnboundedSender<MountCommand>,
-}
-
-impl CallbackHandler {
-    pub fn new(config: DriveConfig, command_tx: mpsc::UnboundedSender<MountCommand>) -> Self {
-        Self { config, command_tx }
-    }
-
-    pub fn id(&self) -> String {
-        self.config
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-    }
-
-    pub async fn sleep(&self) {
-        tokio::time::sleep(Duration::from_secs(10)).await;
-    }
-}
-
-impl SyncFilter for CallbackHandler {
-    fn fetch_data(
-        &self,
-        request: crate::cfapi::filter::Request,
-        ticket: crate::cfapi::filter::ticket::FetchData,
-        info: crate::cfapi::filter::info::FetchData,
-    ) -> crate::cfapi::error::CResult<()> {
-        todo!()
-    }
-
-    fn deleted(&self, request: Request, _info: info::Deleted) {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), "Deleted");
-    }
-
-    fn delete(&self, request: Request, ticket: ticket::Delete, info: info::Delete) -> CResult<()> {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), "Delete");
-        ticket.pass().unwrap();
-        Ok(())
-    }
-
-    fn rename(&self, request: Request, ticket: ticket::Rename, info: info::Rename) -> CResult<()> {
-        let src = request.path();
-        let dest = info.target_path();
-        tracing::debug!(target: "drive::mounts", id = %self.id(), source_path = %src.display(), target_path = %dest.display(), "Rename");
-        Err(CloudErrorKind::NotSupported)
-    }
-
-    fn fetch_placeholders(
-        &self,
-        request: Request,
-        ticket: ticket::FetchPlaceholders,
-        info: info::FetchPlaceholders,
-    ) -> CResult<()> {
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        let command = MountCommand::FetchPlaceholders {
-            path: request.path().to_path_buf(),
-            response: response_tx,
-        };
-        if let Err(e) = self.command_tx.send(command) {
-            tracing::error!(target: "drive::mounts", id = %self.id(), error = %e, "Failed to send FetchPlaceholders command");
-            return Err(CloudErrorKind::NotSupported);
-        }
-
-            
-         match response_rx.blocking_recv() {
-            Ok(Ok(files)) => {
-                tracing::debug!(target: "drive::mounts", id = %self.id(), files = %files.files.len(), "Received placeholders");
-                let mut placeholders = files.files.iter()
-                    .map(|file| cloud_file_to_placeholder(file, &files.local_path, &files.remote_path))
-                    .filter_map(|result|{
-                        if result.is_ok() {
-                            Some(result.unwrap())
-                        } else {
-                            tracing::error!(target: "drive::mounts", id = %self.id(), error = %result.unwrap_err(), "Failed to convert cloud file to placeholder");
-                            None
-                        }
-                    })
-                    .collect::<Vec<PlaceholderFile>>();
-                if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
-                    tracing::error!(target: "drive::mounts", id = %self.id(), error = %e, "Failed to pass placeholders");
-                    return Err(CloudErrorKind::Unsuccessful);
-                }
-                tracing::debug!(target: "drive::mounts", id = %self.id(), placeholders = %placeholders.len(), "Passed placeholders");
-                return Ok(());
-            }
-            _ => {}
-        }
-
-        Err(CloudErrorKind::Unsuccessful)
-    }
-
-    fn closed(&self, request: Request, info: info::Closed) {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), deleted = %info.deleted(), "Closed");
-    }
-
-    fn cancel_fetch_data(&self, _request: Request, _info: info::CancelFetchData) {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), "CancelFetchData");
-    }
-
-    fn validate_data(
-        &self,
-        request: Request,
-        ticket: ticket::ValidateData,
-        info: info::ValidateData,
-    ) -> CResult<()> {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), "ValidateData");
-        Err(CloudErrorKind::NotSupported)
-    }
-
-    fn cancel_fetch_placeholders(&self, request: Request, info: info::CancelFetchPlaceholders) {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), "CancelFetchPlaceholders");
-    }
-
-    fn opened(&self, request: Request, _info: info::Opened) {
-        tracing::debug!(target: "drive::mounts", id = %self.id(), path = %request.path().display(), "Opened");
-    }
-
-    fn dehydrate(
-        &self,
-        request: Request,
-        ticket: ticket::Dehydrate,
-        info: info::Dehydrate,
-    ) -> CResult<()> {
-        tracing::debug!(
-            target: "drive::mounts",
-            id = %self.id(),
-            reason = ?info.reason(),
-            "Dehydrate"
-        );
-        Err(CloudErrorKind::NotSupported)
-    }
-
-    fn dehydrated(&self, _request: Request, info: info::Dehydrated) {
-        tracing::debug!(
-            target: "drive::mounts",
-            id = %self.id(),
-            reason = ?info.reason(),
-            "Dehydrated"
-        );
-    }
-
-    fn renamed(&self, _request: Request, info: info::Renamed) {
-        let dest = info.source_path();
-        tracing::debug!(target: "drive::mounts", id = %self.id(), dest_path = %dest.display(), "Renamed");
-    }
-}
-
-impl Mount {
-    pub async fn fetch_placeholders(&self, path: PathBuf) -> Result<GetPlacehodlerResult> {
-        let config = self.config.read().await;
-        let remote_base = config.remote_path.clone();
-        let sync_path = config.sync_path.clone();
-        drop(config);
-
-        let uri = local_path_to_cr_uri(path.clone(), sync_path, remote_base)
-            .context("failed to convert local path to cloudreve uri")?;
-        let mut placehodlers: Vec<FileResponse> = Vec::new();
-        
-        let mut previous_response = None;
-        loop {
-            let response = self.cr_client.list_files_all(previous_response.as_ref(), &uri.to_string(), PAGE_SIZE).await?;
-            
-            for file in &response.res.files {
-                tracing::debug!(target: "drive::mounts", file = %file.name, "Server file");
-            }
-
-            placehodlers.extend(response.res.files.clone());
-            let has_more: bool = response.more;
-            previous_response = Some(response);
-            
-            if !has_more {
-                break;
-            }
-        }
-
-        tracing::debug!(target: "drive::mounts", uri = %uri.to_string(), "Fetch file list from cloudreve");
-
-        Ok(
-            GetPlacehodlerResult {
-                files: placehodlers,
-                local_path: path.clone(),
-                remote_path: uri.clone(),
-            }
-        )
-    }
 }

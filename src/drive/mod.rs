@@ -1,6 +1,8 @@
+pub mod callback;
+pub mod commands;
 pub mod favicon;
+pub mod interop;
 pub mod manager;
 pub mod mounts;
-pub mod utils;
 pub mod sync;
-pub mod interop;
+pub mod utils;
