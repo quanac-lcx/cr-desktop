@@ -1,5 +1,6 @@
 use super::commands::ManagerCommand;
 use super::mounts::{DriveConfig, Mount};
+use crate::drive::utils::{view_file_online_url, view_folder_online_url};
 use crate::inventory::InventoryDb;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -286,6 +287,7 @@ impl DriveManager {
                     spawn(async move {
                         let path = path.clone();
                         let result = manager.handle_view_online(path.clone()).await;
+                        // TODO: handle result in UI
                         tracing::debug!(target: "drive::manager", path = %path.display(), result = ?result, "ViewOnline command result");
                     });
                 }
@@ -296,7 +298,7 @@ impl DriveManager {
     }
 
     /// Handle ViewOnline command
-    async fn handle_view_online(&self, path: PathBuf) -> Result<String> {
+    async fn handle_view_online(&self, path: PathBuf) -> Result<()> {
         tracing::debug!(target: "drive::manager", path = %path.display(), "ViewOnline command");
 
         // Find the drive that contains this path
@@ -305,28 +307,21 @@ impl DriveManager {
             .await
             .ok_or_else(|| anyhow::anyhow!("No drive found for path: {:?}", path))?;
 
+        let file_meta = self
+            .inventory
+            .query_by_path(path.to_str().unwrap_or(""))
+            .context("Failed to query file metadata")?
+            .ok_or_else(|| anyhow::anyhow!("No file metadata found for path: {:?}", path))?;
+
         let config = mount.get_config().await;
+        let url = if file_meta.is_folder {
+            view_folder_online_url(&file_meta.remote_uri, &config)?
+        } else {
+            view_file_online_url(&file_meta, &config)?
+        };
 
-        // Convert local path to remote path
-        let sync_path = config.sync_path;
-        let relative_path = path
-            .strip_prefix(&sync_path)
-            .context("Failed to get relative path")?;
-
-        // Build URL to view online
-        let url = format!(
-            "{}/home{}{}",
-            config.instance_url.trim_end_matches('/'),
-            config.remote_path.trim_end_matches('/'),
-            if relative_path.as_os_str().is_empty() {
-                String::new()
-            } else {
-                format!("/{}", relative_path.display())
-            }
-        );
-
-        tracing::info!(target: "drive::manager", path = %path.display(), url = %url, "Generated online URL");
-        Ok(url)
+        open::that(url)?;
+        Ok(())
     }
 
     pub async fn shutdown(&self) {

@@ -247,8 +247,8 @@ impl InventoryDb {
                 |row| {
                     let drive_id_str: String = row.get(1)?;
                     let is_folder: bool = row.get(2)?;
-                    let metadata_json: String = row.get(7)?;
-                    let props_json: Option<String> = row.get(8)?;
+                    let metadata_json: String = row.get(8)?;
+                    let props_json: Option<String> = row.get(9)?;
 
                     Ok(FileMetadata {
                         id: row.get(0)?,
@@ -262,9 +262,9 @@ impl InventoryDb {
                         is_folder,
                         local_path: row.get(3)?,
                         remote_uri: row.get(4)?,
-                        created_at: row.get(4)?,
-                        updated_at: row.get(5)?,
-                        etag: row.get(6)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                        etag: row.get(7)?,
                         metadata: serde_json::from_str(&metadata_json).map_err(|e| {
                             rusqlite::Error::FromSqlConversionFailure(
                                 7,
