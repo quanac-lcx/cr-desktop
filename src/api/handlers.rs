@@ -85,7 +85,7 @@ pub async fn add_drive(
     tracing::info!(target: "api::drives", drive_id = %drive_id, name = %req.name, "Adding new drive");
     let mut config = DriveConfig::default();
 
-    config.id = Some(drive_id.clone());
+    config.id = drive_id.clone();
     config.instance_url = req.instance_url;
     config.remote_path = req.remote_path;
     config.name = req.name.clone();

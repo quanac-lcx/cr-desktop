@@ -38,6 +38,7 @@ pub fn cloud_file_to_placeholder(
             }
             .size(file.size as u64)
             .changed(last_modified)
+            .written(last_modified)
             .created(created_at),
         )
         .mark_in_sync()
