@@ -112,6 +112,11 @@ impl Mount {
         self.config.read().await.clone()
     }
 
+    /// Get the sync path for the drive
+    pub async fn get_sync_path(&self) -> PathBuf {
+        self.config.read().await.sync_path.clone()
+    }
+
     pub async fn start(&mut self) -> Result<()> {
         if !StorageProviderSyncRootManager::IsSupported()
             .context("Cloud Filter API is not supported")?
@@ -256,6 +261,10 @@ impl Mount {
             }
         }
         self.queue.shutdown().await;
+
+        if let Err(e) = self.inventory.nuke_drive(&self.id) {
+            tracing::error!(target: "drive::mounts", id=%self.id, error=%e, "Failed to nuke drive");
+        }
     }
 }
 

@@ -4,8 +4,8 @@ mod drive;
 mod events;
 mod inventory;
 mod logging;
-mod tasks;
 mod shellext;
+mod tasks;
 
 use anyhow::{Context, Result};
 use api::{AppState, create_router};
@@ -30,6 +30,10 @@ async fn main() -> Result<()> {
     tracing::info!(target: "main", "Initializing DriveManager...");
     let drive_manager = Arc::new(DriveManager::new().context("Failed to create DriveManager")?);
 
+    // Spawn command processor for DriveManager
+    drive_manager.spawn_command_processor().await;
+    tracing::info!(target: "main", "DriveManager command processor started");
+
     // Load drive configurations from disk
     drive_manager
         .load()
@@ -40,16 +44,17 @@ async fn main() -> Result<()> {
     let event_broadcaster = EventBroadcaster::new(100);
     tracing::info!(target: "main", "Event broadcasting system initialized");
 
-     // Initialize and start the shell services (context menu handler) in a separate thread
-     let mut shell_service = shellext::shell_service::init_and_start_service_task(drive_manager.clone());
-    
-     // Wait for shell services to initialize
-     if let Err(e) = shell_service.wait_for_init() {
-         tracing::error!(target: "main", "Warning: Failed to initialize shell services: {:?}", e);
-         tracing::info!(target: "main", "Continuing without context menu handler...\n");
-     } else {
-         tracing::info!(target: "main", "Context menu handler initialized successfully!\n");
-     }
+    // Initialize and start the shell services (context menu handler) in a separate thread
+    let mut shell_service =
+        shellext::shell_service::init_and_start_service_task(drive_manager.clone());
+
+    // Wait for shell services to initialize
+    if let Err(e) = shell_service.wait_for_init() {
+        tracing::error!(target: "main", "Warning: Failed to initialize shell services: {:?}", e);
+        tracing::info!(target: "main", "Continuing without context menu handler...\n");
+    } else {
+        tracing::info!(target: "main", "Context menu handler initialized successfully!\n");
+    }
 
     // Initialize TaskManager
     let task_config = TaskManagerConfig {

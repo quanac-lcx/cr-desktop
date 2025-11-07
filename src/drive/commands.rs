@@ -30,6 +30,14 @@ pub enum MountCommand {
 // of the callback and can be safely transferred between threads.
 unsafe impl Send for MountCommand {}
 
+/// Commands for the DriveManager
+/// These can be sent from external sources like context menus or other UI components
+#[derive(Debug)]
+pub enum ManagerCommand {
+    /// View a file or folder online in the web interface
+    ViewOnline { path: PathBuf },
+}
+
 impl Mount {
     pub async fn fetch_placeholders(&self, path: PathBuf) -> Result<GetPlacehodlerResult> {
         let config = self.config.read().await;

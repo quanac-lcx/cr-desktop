@@ -108,6 +108,15 @@ impl InventoryDb {
         Ok(())
     }
 
+    pub fn nuke_drive(&self, drive_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM file_metadata WHERE drive_id = ?1",
+            params![drive_id],
+        )?;
+        Ok(())
+    }
+
     /// Insert a new file metadata entry
     pub fn insert(&self, entry: &MetadataEntry) -> Result<i64> {
         let conn = self.conn.lock().unwrap();

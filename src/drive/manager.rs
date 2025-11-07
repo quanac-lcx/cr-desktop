@@ -1,12 +1,14 @@
+use super::commands::ManagerCommand;
 use super::mounts::{DriveConfig, Mount};
-use crate::inventory::{self, InventoryDb};
+use crate::inventory::InventoryDb;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::spawn;
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriveState {
@@ -25,6 +27,9 @@ pub struct DriveManager {
     drives: Arc<RwLock<HashMap<String, Arc<Mount>>>>,
     config_dir: PathBuf,
     inventory: Arc<InventoryDb>,
+    command_tx: mpsc::UnboundedSender<ManagerCommand>,
+    command_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ManagerCommand>>>>,
+    processor_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl DriveManager {
@@ -38,10 +43,15 @@ impl DriveManager {
                 .context("Failed to create .cloudreve config directory")?;
         }
 
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+
         Ok(Self {
             config_dir,
             drives: Arc::new(RwLock::new(HashMap::new())),
             inventory: Arc::new(InventoryDb::new().context("Failed to create inventory database")?),
+            command_tx,
+            command_rx: Arc::new(Mutex::new(Some(command_rx))),
+            processor_handle: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -146,15 +156,49 @@ impl DriveManager {
         Ok(id)
     }
 
+    // Search drive by child file path.
+    // Child path can be up to the sync root path.
+    pub async fn search_drive_by_child_path(&self, path: &str) -> Option<Arc<Mount>> {
+        let read_guard = self.drives.read().await;
+
+        // Convert the input path to an absolute PathBuf for comparison
+        let target_path = PathBuf::from(path);
+        let target_path = match target_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                // If canonicalize fails (e.g., path doesn't exist), try to work with the original path
+                target_path
+            }
+        };
+
+        // Iterate through all drives and check if the target path is under their sync root
+        for (_, mount) in read_guard.iter() {
+            let sync_path = mount.get_sync_path().await;
+
+            // Normalize the sync path
+            let sync_path = match sync_path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => sync_path,
+            };
+
+            // Check if target_path starts with sync_path (is a child of sync_path)
+            if target_path.starts_with(&sync_path) {
+                return Some(mount.clone());
+            }
+        }
+
+        None
+    }
+
     /// Remove a drive by ID
-    pub async fn remove_drive(&self, id: &str) -> Result<Option<DriveConfig>> {
+    pub async fn remove_drive(&self, _id: &str) -> Result<Option<DriveConfig>> {
         // let mut write_guard = self.drives.write().await;
         // Ok(write_guard.remove(id).map(async|mount| mount.get_config().await))
         Err(anyhow::anyhow!("Not implemented"))
     }
 
     /// Get a drive by ID
-    pub async fn get_drive(&self, id: &str) -> Option<DriveConfig> {
+    pub async fn get_drive(&self, _id: &str) -> Option<DriveConfig> {
         //let read_guard = self.drives.read().await;
         // read_guard.get(id).map(async|mount| mount.get_config().await)
         None
@@ -171,7 +215,7 @@ impl DriveManager {
     }
 
     /// Update drive configuration
-    pub async fn update_drive(&self, id: &str, config: DriveConfig) -> Result<()> {
+    pub async fn update_drive(&self, _id: &str, _config: DriveConfig) -> Result<()> {
         // let mut write_guard = self.drives.write().await;
         // if write_guard.contains_key(id) {
         //     // write_guard.insert(id.to_string(), Mount::new(config.clone()));
@@ -183,17 +227,17 @@ impl DriveManager {
     }
 
     /// Enable/disable a drive
-    pub async fn set_drive_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+    pub async fn set_drive_enabled(&self, _id: &str, _enabled: bool) -> Result<()> {
         Err(anyhow::anyhow!("Not implemented"))
     }
 
     /// Placeholder: Start syncing a drive
-    pub async fn start_sync(&self, id: &str) -> Result<()> {
+    pub async fn start_sync(&self, _id: &str) -> Result<()> {
         Err(anyhow::anyhow!("Not implemented"))
     }
 
     /// Placeholder: Stop syncing a drive
-    pub async fn stop_sync(&self, id: &str) -> Result<()> {
+    pub async fn stop_sync(&self, _id: &str) -> Result<()> {
         Err(anyhow::anyhow!("Not implemented"))
     }
 
@@ -209,7 +253,94 @@ impl DriveManager {
         }))
     }
 
+    /// Get a command sender for external code to send commands to the manager
+    pub fn get_command_sender(&self) -> mpsc::UnboundedSender<ManagerCommand> {
+        self.command_tx.clone()
+    }
+
+    /// Spawn the command processor task
+    pub async fn spawn_command_processor(self: &Arc<Self>) {
+        let mut command_rx_guard = self.command_rx.lock().await;
+        if let Some(command_rx) = command_rx_guard.take() {
+            let manager = self.clone();
+            let handle = tokio::spawn(async move {
+                Self::process_commands(manager, command_rx).await;
+            });
+            *self.processor_handle.lock().await = Some(handle);
+        }
+    }
+
+    /// Process commands from external sources asynchronously
+    async fn process_commands(
+        manager: Arc<Self>,
+        mut command_rx: mpsc::UnboundedReceiver<ManagerCommand>,
+    ) {
+        tracing::info!(target: "drive::manager", "Command processor started");
+
+        while let Some(command) = command_rx.recv().await {
+            tracing::trace!(target: "drive::manager", command = ?command, "Processing command");
+            let manager = manager.clone();
+            match command {
+                ManagerCommand::ViewOnline { path } => {
+                    let path = path.clone();
+                    spawn(async move {
+                        let path = path.clone();
+                        let result = manager.handle_view_online(path.clone()).await;
+                        tracing::debug!(target: "drive::manager", path = %path.display(), result = ?result, "ViewOnline command result");
+                    });
+                }
+            }
+        }
+
+        tracing::info!(target: "drive::manager", "Command processor stopped");
+    }
+
+    /// Handle ViewOnline command
+    async fn handle_view_online(&self, path: PathBuf) -> Result<String> {
+        tracing::debug!(target: "drive::manager", path = %path.display(), "ViewOnline command");
+
+        // Find the drive that contains this path
+        let mount = self
+            .search_drive_by_child_path(path.to_str().unwrap_or(""))
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No drive found for path: {:?}", path))?;
+
+        let config = mount.get_config().await;
+
+        // Convert local path to remote path
+        let sync_path = config.sync_path;
+        let relative_path = path
+            .strip_prefix(&sync_path)
+            .context("Failed to get relative path")?;
+
+        // Build URL to view online
+        let url = format!(
+            "{}/home{}{}",
+            config.instance_url.trim_end_matches('/'),
+            config.remote_path.trim_end_matches('/'),
+            if relative_path.as_os_str().is_empty() {
+                String::new()
+            } else {
+                format!("/{}", relative_path.display())
+            }
+        );
+
+        tracing::info!(target: "drive::manager", path = %path.display(), url = %url, "Generated online URL");
+        Ok(url)
+    }
+
     pub async fn shutdown(&self) {
+        tracing::info!(target: "drive::manager", "Shutting down DriveManager");
+
+        // Close the command channel to signal the processor task to stop
+        drop(self.command_tx.clone());
+
+        // Wait for the processor task to finish
+        if let Some(handle) = self.processor_handle.lock().await.take() {
+            tracing::debug!(target: "drive::manager", "Waiting for command processor to finish");
+            handle.abort();
+        }
+
         let write_guard = self.drives.write().await;
         for (_, mount) in write_guard.iter() {
             mount.shutdown().await;
