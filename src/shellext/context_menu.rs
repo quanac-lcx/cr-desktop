@@ -56,12 +56,13 @@ impl IExplorerCommand_Impl for TestExplorerCommandHandler_Impl {
 
     fn GetState(&self, items: Option<&IShellItemArray>, _oktobeslow: BOOL) -> Result<u32> {
         let Some(items) = items else {
-            return Ok(ECS_HIDDEN.0 as u32);
+            // Not select anthing, but still triggerd from a folder
+            return Ok(ECS_ENABLED.0 as u32);
         };
 
         unsafe {
             let count = items.GetCount()?;
-            if count == 1 {
+            if count <= 1 {
                 Ok(ECS_ENABLED.0 as u32)
             } else {
                 Ok(ECS_HIDDEN.0 as u32)

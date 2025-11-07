@@ -310,14 +310,16 @@ impl DriveManager {
         let file_meta = self
             .inventory
             .query_by_path(path.to_str().unwrap_or(""))
-            .context("Failed to query file metadata")?
-            .ok_or_else(|| anyhow::anyhow!("No file metadata found for path: {:?}", path))?;
+            .context("Failed to query file metadata")?;
 
         let config = mount.get_config().await;
-        let url = if file_meta.is_folder {
-            view_folder_online_url(&file_meta.remote_uri, &config)?
-        } else {
-            view_file_online_url(&file_meta, &config)?
+
+        // Determine which URL to open
+        let url = match file_meta {
+            // If no metadata, assume it's the sync root, open folder
+            None => view_folder_online_url(&config.remote_path, &config)?,
+            Some(ref meta) if meta.is_folder => view_folder_online_url(&meta.remote_uri, &config)?,
+            Some(ref meta) => view_file_online_url(meta, &config)?,
         };
 
         open::that(url)?;
