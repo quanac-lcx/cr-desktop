@@ -1,7 +1,9 @@
 use super::context_menu::*;
 use crate::drive::manager::DriveManager;
 use crate::shellext::custom_state::{CLSID_CUSTOM_STATE_HANDLER, CustomStateHandlerFactory};
-use crate::shellext::status_ui::{CLSID_STATUS_UI_HANDLER, StatusUIHandlerFactory};
+use crate::shellext::status_ui::{
+    CLSID_STATUS_UI_HANDLER, StatusUIHandlerFactory, StatusUIHandlerFactoryFactory,
+};
 use rust_i18n::t;
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -103,7 +105,7 @@ impl ShellServices {
 
         unsafe {
             let factory: IClassFactory =
-                StatusUIHandlerFactory::new(self.drive_manager.clone()).into();
+                StatusUIHandlerFactoryFactory::new(self.drive_manager.clone()).into();
 
             let cookie = CoRegisterClassObject(
                 &CLSID_STATUS_UI_HANDLER,
