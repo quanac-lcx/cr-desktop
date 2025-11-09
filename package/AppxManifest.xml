@@ -24,7 +24,7 @@
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.18362.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.22598.0" />
   </Dependencies>
 
   <Resources>
@@ -64,6 +64,9 @@
             </com:ExeServer>
             <com:ExeServer DisplayName="Cloudreve Custom State Handler" Executable="cloudreve-sync.exe">
               <com:Class Id="f0c9de6c-6c76-44d7-a58e-579cdf7af263" />
+            </com:ExeServer>
+            <com:ExeServer DisplayName="Cloudreve Status UI Source Factory" Executable="cloudreve-sync.exe">
+              <com:Class Id="b1d8ef74-822d-401a-a14a-25f45b1f70b7" />
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
