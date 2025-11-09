@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::spawn;
 use tokio::sync::{Mutex, RwLock, mpsc};
+use rust_i18n::t;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriveState {

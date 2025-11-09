@@ -16,6 +16,7 @@ use windows::{
 use crate::drive::commands::ManagerCommand;
 use crate::drive::manager::DriveManager;
 use windows::ApplicationModel;
+use rust_i18n::t;
 
 // UUID for our context menu handler - matches the C++ implementation
 const CLSID_TEST_EXPLORER_COMMAND: GUID = GUID::from_u128(0x165cd069_d9c8_42b4_8e37_b6971afa4494);
@@ -50,8 +51,9 @@ impl TestExplorerCommandHandler {
 
 impl IExplorerCommand_Impl for TestExplorerCommandHandler_Impl {
     fn GetTitle(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {
-        let title = w!("View oneline");
-        unsafe { SHStrDupW(title) }
+        let title = t!("viewOnline");
+        let hstring = HSTRING::from(title.as_ref());
+        unsafe { SHStrDupW(&hstring) }
     }
 
     fn GetIcon(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {

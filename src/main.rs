@@ -27,6 +27,8 @@ fn init_i18n() {
     set_locale(locale.as_str());
 }
 
+i18n!("locales");
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_i18n();
