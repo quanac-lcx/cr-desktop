@@ -1,6 +1,8 @@
 use crate::drive::manager::DriveManager;
+use crate::shellext::vector::create_vector;
 use crate::utils::app::{AppRoot, get_app_root};
 use std::sync::{Arc, Mutex};
+use windows::Foundation::Collections::{IIterable, IVector, IVectorView};
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler, Uri};
 use windows::{
     Storage::Provider::*,
@@ -10,6 +12,43 @@ use windows::{
 
 // UUID for our custom state handler - matches the C++ implementation
 pub const CLSID_STATUS_UI_HANDLER: GUID = GUID::from_u128(0xb1d8ef74_822d_401a_a14a_25f45b1f70b7);
+
+#[implement(IStorageProviderUICommand)]
+pub struct SyncStatusUICommand {
+    app_root: AppRoot,
+    label: HSTRING,
+    description: HSTRING,
+    icon: Uri,
+}
+
+impl SyncStatusUICommand {
+    pub fn new(app_root: AppRoot, label: HSTRING, description: HSTRING, icon: Uri) -> Self {
+        Self {
+            app_root,
+            label,
+            description,
+            icon,
+        }
+    }
+}
+
+impl IStorageProviderUICommand_Impl for SyncStatusUICommand_Impl {
+    fn Label(&self) -> Result<HSTRING> {
+        Ok(self.label.clone())
+    }
+    fn Description(&self) -> Result<HSTRING> {
+        Ok(self.description.clone())
+    }
+    fn Icon(&self) -> Result<Uri> {
+        Ok(self.icon.clone())
+    }
+    fn State(&self) -> Result<StorageProviderUICommandState> {
+        Ok(StorageProviderUICommandState::Enabled)
+    }
+    fn Invoke(&self) -> Result<()> {
+        Ok(())
+    }
+}
 
 #[implement(IStorageProviderStatusUISource)]
 pub struct StatusUIHandler {
@@ -38,10 +77,56 @@ impl IStorageProviderStatusUISource_Impl for StatusUIHandler_Impl {
             image_path
         )))?)?;
 
+        let command: IStorageProviderUICommand = SyncStatusUICommand::new(
+            self.app_root.clone(),
+            HSTRING::from("已同步"),
+            HSTRING::from("所有更改已同步到云端。"),
+            Uri::CreateUri(&HSTRING::from(format!(
+                "{}\\CloudIconSynced.svg",
+                image_path
+            )))?,
+        )
+        .into();
+        ui.SetSyncStatusCommand(&command)?;
+
+        let primary_command: IStorageProviderUICommand = SyncStatusUICommand::new(
+            self.app_root.clone(),
+            HSTRING::from("容量详情"),
+            HSTRING::from("容量详情"),
+            Uri::CreateUri(&HSTRING::from(format!(
+                "{}\\CloudIconSynced.svg",
+                image_path
+            )))?,
+        )
+        .into();
+        ui.SetProviderPrimaryCommand(&primary_command)?;
+
+        let secondary_command1: IStorageProviderUICommand = SyncStatusUICommand::new(
+            self.app_root.clone(),
+            HSTRING::from("容量详情"),
+            HSTRING::from("容量详情"),
+            Uri::CreateUri(&HSTRING::from(format!("{}\\ProfileIcon.svg", image_path)))?,
+        )
+        .into();
+
+        let secondary_command2: IStorageProviderUICommand = SyncStatusUICommand::new(
+            self.app_root.clone(),
+            HSTRING::from("容量详情"),
+            HSTRING::from("容量详情"),
+            Uri::CreateUri(&HSTRING::from(format!("{}\\SettingsIcon.svg", image_path)))?,
+        )
+        .into();
+
+        let ivector = create_vector::<IStorageProviderUICommand>(vec![
+            secondary_command1.into(),
+            secondary_command2.into(),
+        ])?;
+        ui.SetProviderSecondaryCommands(&ivector)?;
+
         let quota_ui = StorageProviderQuotaUI::new()?;
-        quota_ui.SetQuotaUsedInBytes(1024 * 1024 * 10)?;
-        quota_ui.SetQuotaUsedInBytes(1024 * 1024 * 5)?;
-        quota_ui.SetQuotaUsedLabel(&HSTRING::from("10 MB Used"))?;
+        quota_ui.SetQuotaUsedInBytes(159441903)?;
+        quota_ui.SetQuotaTotalInBytes(1073741824)?;
+        quota_ui.SetQuotaUsedLabel(&HSTRING::from("152.1 MB / 1.0 GB (14.9%)"))?;
         ui.SetQuotaUI(&quota_ui)?;
 
         Ok(ui)

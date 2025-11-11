@@ -16,6 +16,8 @@ pub fn init_app_root() {
 pub fn get_app_root() -> AppRoot {
     AppRoot(APP_ROOT.get().expect("APP_ROOT not initialized").clone())
 }
+
+#[derive(Clone)]
 pub struct AppRoot(Arc<String>);
 
 impl AppRoot {
