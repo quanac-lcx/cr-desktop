@@ -48,11 +48,26 @@ impl CallbackHandler {
 impl SyncFilter for CallbackHandler {
     fn fetch_data(
         &self,
-        request: crate::cfapi::filter::Request,
-        ticket: crate::cfapi::filter::ticket::FetchData,
-        info: crate::cfapi::filter::info::FetchData,
+        request: Request,
+        ticket: ticket::FetchData,
+        info: info::FetchData,
     ) -> crate::cfapi::error::CResult<()> {
-        todo!()
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let command = MountCommand::FetchData {
+            path: request.path().to_path_buf(),
+            ticket,
+            range: info.required_file_range(),
+            response: response_tx,
+        };
+        if let Err(e) = self.command_tx.send(command) {
+            tracing::error!(target: "drive::mounts", id = %self.id, error = %e, "Failed to send FetchData command");
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        match response_rx.blocking_recv() {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(CloudErrorKind::Unsuccessful),
+        }
     }
 
     fn deleted(&self, request: Request, _info: info::Deleted) {

@@ -240,7 +240,27 @@ impl Mount {
                     config.credentials.refresh_token = credentials.refresh_token;
                     config.credentials.refresh_expires = credentials.refresh_expires;
                     config.credentials.access_expires = Some(credentials.access_expires);
+                    // TODO: persist to JSON
                     drop(config);
+                }
+                MountCommand::FetchData {
+                    path,
+                    ticket,
+                    range,
+                    response,
+                } => {
+                    let s_clone = s.clone();
+                    let mount_id_clone = mount_id.clone();
+                    spawn(async move {
+                        let result = s_clone.fetch_data(path, ticket, range).await;
+                        if let Err(e) = result {
+                            tracing::error!(target: "drive::mounts", id = %mount_id_clone, error = %e, "Failed to fetch data");
+                            let _ = response.send(Err(e));
+                            return;
+                        }
+                        tracing::debug!(target: "drive::mounts", id = %mount_id_clone, result = ?result, "Fetched data");
+                        let _ = response.send(result);
+                    });
                 }
             }
         }

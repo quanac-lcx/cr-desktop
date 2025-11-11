@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use crate::models::common::PaginationResults;
 use crate::models::user::User;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// List file service parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,7 +331,7 @@ pub struct CreateFileService {
 }
 
 /// File URL service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FileURLService {
     pub uris: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -522,4 +522,3 @@ pub mod navigator_capability {
     pub const RELOCATE: i32 = 22;
     pub const ENTER_FOLDER: i32 = 23;
 }
-
