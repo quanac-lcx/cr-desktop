@@ -32,9 +32,9 @@ impl IStorageProviderStatusUISource_Impl for StatusUIHandler_Impl {
         let mut ui = StorageProviderStatusUI::new()?;
         let image_path = self.app_root.image_path();
         ui.SetProviderState(StorageProviderState::InSync)?;
-        ui.SetProviderStateLabel(&HSTRING::from("Synced"))?;
+        ui.SetProviderStateLabel(&HSTRING::from("Cloudreve"))?;
         ui.SetProviderStateIcon(&Uri::CreateUri(&HSTRING::from(format!(
-            "{}\\CloudIconSynced.svg",
+            "{}\\cloudreve.svg",
             image_path
         )))?)?;
 
