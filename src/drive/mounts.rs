@@ -5,6 +5,7 @@ use crate::cfapi::root::{
 use crate::drive::callback::CallbackHandler;
 use crate::drive::commands::ManagerCommand;
 use crate::drive::commands::MountCommand;
+use crate::drive::sync::group_fs_events;
 use crate::inventory::InventoryDb;
 use crate::tasks::{TaskManager, TaskManagerConfig};
 use ::serde::{Deserialize, Serialize};
@@ -212,12 +213,20 @@ impl Mount {
     }
 
     pub async fn start_fs_watcher(&self) -> Result<()> {
+        let command_tx = self.command_tx.clone();
         let mut debouncer = new_debouncer(
             Duration::from_secs(2),
             None,
-            |result: DebounceEventResult| match result {
+            move |result: DebounceEventResult| match result {
                 Ok(events) => {
-                    tracing::debug!(target: "drive::mounts", events = ?events, "FS watcher events")
+                    tracing::debug!(target: "drive::mounts", events = ?events, "FS watcher events");
+                    let grouped_events = group_fs_events(events);
+                    let command = MountCommand::ProcessFsEvents {
+                        events: grouped_events,
+                    };
+                    if let Err(e) = command_tx.send(command) {
+                        tracing::error!(target: "drive::mounts", error = %e, "Failed to send ProcessFsEvents command");
+                    }
                 }
                 Err(errors) => {
                     tracing::error!(target: "drive::mounts", errors = ?errors, "Failed to watch FS")
@@ -303,6 +312,14 @@ impl Mount {
                         }
                         tracing::debug!(target: "drive::mounts", id = %mount_id_clone, result = ?result, "Fetched data");
                         let _ = response.send(result);
+                    });
+                }
+                MountCommand::ProcessFsEvents { events } => {
+                    tracing::debug!(target: "drive::mounts", id = %mount_id, events = ?events, "Processing FS events");
+                    let s_clone = s.clone();
+                    let mount_id_clone = mount_id.clone();
+                    spawn(async move {
+                        s_clone.process_fs_events(events).await;
                     });
                 }
             }

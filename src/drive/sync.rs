@@ -9,6 +9,10 @@ use cloudreve_api::models::{
     explorer::{FileResponse, file_type, metadata},
     uri::CrUri,
 };
+use notify_debouncer_full::notify::event::{
+    AccessKind, CreateKind, EventKind, ModifyKind, RemoveKind,
+};
+use notify_debouncer_full::{DebouncedEvent, notify::Event};
 use nt_time::FileTime;
 use std::{collections::HashMap, ffi::OsString, path::PathBuf};
 use uuid::Uuid;
@@ -87,5 +91,59 @@ pub fn cloud_file_to_metadata_entry(
 }
 
 pub fn is_symbolic_link(file: &FileResponse) -> bool {
-    return file.metadata.is_some() && file.metadata.as_ref().unwrap().get(metadata::SHARE_REDIRECT).is_some();
+    return file.metadata.is_some()
+        && file
+            .metadata
+            .as_ref()
+            .unwrap()
+            .get(metadata::SHARE_REDIRECT)
+            .is_some();
+}
+
+pub type GroupedFsEvents = HashMap<EventKind, Vec<Event>>;
+
+/// Groups filesystem events by their first-level EventKind.
+///
+/// This function groups events into a HashMap where the key is the first-level EventKind
+/// (normalized to use ::Any for nested variants) and the value is a vector of events.
+///
+/// # Arguments
+/// * `events` - A vector of DebouncedEvent to be grouped
+///
+/// # Returns
+/// A HashMap mapping EventKind to Vec<DebouncedEvent>
+pub fn group_fs_events(events: Vec<DebouncedEvent>) -> GroupedFsEvents {
+    let mut grouped: GroupedFsEvents = HashMap::new();
+
+    for event in events {
+        let normalized_kind = normalize_event_kind(&event.kind);
+        grouped
+            .entry(normalized_kind)
+            .or_insert_with(Vec::new)
+            .push(event.event);
+    }
+
+    grouped
+}
+
+/// Normalizes an EventKind to its first-level representation.
+///
+/// This helper function converts all nested EventKind variants to use their ::Any variant,
+/// effectively grouping by the first level only. This can be extended to support deeper
+/// level matching by adding parameters for match depth or specific variant matching.
+///
+/// # Arguments
+/// * `kind` - The EventKind to normalize
+///
+/// # Returns
+/// A normalized EventKind representing the first level only
+fn normalize_event_kind(kind: &EventKind) -> EventKind {
+    match kind {
+        EventKind::Any => EventKind::Any,
+        EventKind::Access(_) => EventKind::Access(AccessKind::Any),
+        EventKind::Create(_) => EventKind::Create(CreateKind::Any),
+        EventKind::Modify(_) => EventKind::Modify(ModifyKind::Any),
+        EventKind::Remove(_) => EventKind::Remove(RemoveKind::Any),
+        EventKind::Other => EventKind::Other,
+    }
 }

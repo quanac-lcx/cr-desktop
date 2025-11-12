@@ -1,17 +1,18 @@
 use crate::{
     cfapi::{filter::ticket, utility::WriteAt},
-    drive::{mounts::Mount, utils::local_path_to_cr_uri},
+    drive::{mounts::Mount, sync::GroupedFsEvents, utils::local_path_to_cr_uri},
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cloudreve_api::{
     api::{ExplorerApi, explorer::ExplorerApiExt},
     models::{
-        explorer::{FileResponse, FileURLService, metadata},
+        explorer::{DeleteFileService, FileResponse, FileURLService, metadata},
         uri::CrUri,
         user::Token,
     },
 };
+use notify_debouncer_full::notify::{Event, EventKind};
 use std::{ops::Range, path::PathBuf};
 use tokio::sync::oneshot::Sender;
 const PAGE_SIZE: i32 = 1000;
@@ -43,6 +44,9 @@ pub enum MountCommand {
         ticket: ticket::FetchData,
         range: Range<u64>,
         response: Sender<Result<()>>,
+    },
+    ProcessFsEvents {
+        events: GroupedFsEvents,
     },
 }
 
@@ -254,5 +258,67 @@ impl Mount {
             ));
         }
         Ok(thumb_response.bytes().await?)
+    }
+
+    pub async fn process_fs_events(&self, events: GroupedFsEvents) -> Result<()> {
+        tracing::debug!(target: "drive::commands", events = ?events, "Processing FS events");
+        for (event_kind, events) in events {
+            match event_kind {
+                EventKind::Remove(_) => self.process_fs_delete_events(events).await?,
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn process_fs_delete_events(&self, events: Vec<Event>) -> Result<()> {
+        tracing::debug!(target: "drive::commands", events = ?events, "Processing FS delete events");
+
+        let config = self.config.read().await;
+        let remote_base = config.remote_path.clone();
+        let sync_path = config.sync_path.clone();
+        drop(config);
+
+        let uris: Vec<String> = events
+            .iter()
+            .flat_map(|event| &event.paths)
+            .filter_map(|path| {
+                match local_path_to_cr_uri(path.clone(), sync_path.clone(), remote_base.clone()) {
+                    Ok(uri) => Some(uri.to_string()),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "drive::commands",
+                            path = %path.display(),
+                            error = %e,
+                            "Failed to convert local path to Cloudreve URI"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        if !uris.is_empty() {
+            let delete_res = self
+                .cr_client
+                .delete_files(&DeleteFileService {
+                    uris: uris.clone(),
+                    unlink: None,
+                    skip_soft_delete: None,
+                })
+                .await;
+
+            match delete_res {
+                Ok(_) => {
+                    tracing::debug!(target: "drive::commands", uris = ?uris, "Deleted files");
+                }
+                Err(e) => {
+                    tracing::error!(target: "drive::commands", uris = ?uris, error = %e, "Failed to delete files");
+                    return Err(e.into());
+                }
+            };
+        }
+
+        Ok(())
     }
 }

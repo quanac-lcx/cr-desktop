@@ -76,7 +76,7 @@ impl SyncFilter for CallbackHandler {
 
     fn delete(&self, request: Request, ticket: ticket::Delete, info: info::Delete) -> CResult<()> {
         tracing::debug!(target: "drive::mounts", id = %self.id, path = %request.path().display(), "Delete");
-        ticket.pass().unwrap();
+        ticket.pass();
         Ok(())
     }
 
