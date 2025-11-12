@@ -10,7 +10,10 @@ use crate::tasks::{TaskManager, TaskManagerConfig};
 use ::serde::{Deserialize, Serialize};
 use anyhow::{Context, Result};
 use cloudreve_api::{Client, ClientConfig, models::user::Token};
+use notify_debouncer_full::notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -56,6 +59,8 @@ pub enum MountStatus {
     Warnning,
 }
 
+type FsWatcher = Debouncer<RecommendedWatcher, RecommendedCache>;
+
 pub struct Mount {
     queue: Arc<TaskManager>,
     pub config: Arc<RwLock<DriveConfig>>,
@@ -65,6 +70,7 @@ pub struct Mount {
     processor_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     status: Arc<RwLock<MountStatus>>,
     manager_command_tx: mpsc::UnboundedSender<ManagerCommand>,
+    fs_watcher: Mutex<Option<FsWatcher>>,
     pub cr_client: Arc<Client>,
     pub inventory: Arc<InventoryDb>,
     pub id: String,
@@ -123,6 +129,7 @@ impl Mount {
             status: Arc::new(RwLock::new(MountStatus::InSync)),
             id,
             manager_command_tx,
+            fs_watcher: Mutex::new(None),
         }
     }
 
@@ -200,6 +207,30 @@ impl Mount {
             .context("failed to connect to sync root")?;
 
         self.connection = Some(connection);
+        self.start_fs_watcher().await?;
+        Ok(())
+    }
+
+    pub async fn start_fs_watcher(&self) -> Result<()> {
+        let mut debouncer = new_debouncer(
+            Duration::from_secs(2),
+            None,
+            |result: DebounceEventResult| match result {
+                Ok(events) => {
+                    tracing::debug!(target: "drive::mounts", events = ?events, "FS watcher events")
+                }
+                Err(errors) => {
+                    tracing::error!(target: "drive::mounts", errors = ?errors, "Failed to watch FS")
+                }
+            },
+        )?;
+
+        tracing::info!(target: "drive::mounts", id = %self.id, "Watching FS");
+        debouncer.watch(
+            &self.config.read().await.sync_path,
+            RecursiveMode::Recursive,
+        )?;
+        *self.fs_watcher.lock().await = Some(debouncer);
         Ok(())
     }
 
@@ -291,6 +322,11 @@ impl Mount {
 
     pub async fn shutdown(&self) {
         tracing::info!(target: "drive::mounts", id=%self.id, "Shutting down Mount");
+
+        if let Some(fs_watcher) = self.fs_watcher.lock().await.take() {
+            tracing::debug!(target: "drive::mounts", id=%self.id, "Stopping FS watcher");
+            drop(fs_watcher);
+        }
 
         // Close the command channel to signal the processor task to stop
         drop(self.command_tx.clone());

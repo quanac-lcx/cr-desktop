@@ -1,7 +1,6 @@
 use crate::{
     cfapi::{filter::ticket, utility::WriteAt},
-    drive::{interop::GetPlacehodlerResult, mounts::Mount, utils::local_path_to_cr_uri},
-    inventory,
+    drive::{mounts::Mount, utils::local_path_to_cr_uri},
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -9,12 +8,20 @@ use cloudreve_api::{
     api::{ExplorerApi, explorer::ExplorerApiExt},
     models::{
         explorer::{FileResponse, FileURLService, metadata},
+        uri::CrUri,
         user::Token,
     },
 };
 use std::{ops::Range, path::PathBuf};
 use tokio::sync::oneshot::Sender;
 const PAGE_SIZE: i32 = 1000;
+
+#[derive(Debug, Clone)]
+pub struct GetPlacehodlerResult {
+    pub files: Vec<FileResponse>,
+    pub local_path: PathBuf,
+    pub remote_path: CrUri,
+}
 
 /// Messages sent from OS threads (SyncFilter callbacks) to the async processing task
 ///
