@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::models::common::PaginationResults;
+use serde::{Deserialize, Serialize};
 
 /// Task status
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub enum TaskType {
 }
 
 /// Task response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskResponse {
     pub created_at: String,
     pub updated_at: String,
@@ -55,7 +55,7 @@ pub struct TaskResponse {
 }
 
 /// Task summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
@@ -63,7 +63,7 @@ pub struct TaskSummary {
 }
 
 /// Task properties
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskProps {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub src: Option<String>,
@@ -82,9 +82,10 @@ pub struct TaskProps {
 }
 
 /// Download task state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DownloadTaskState {
+    #[default]
     Seeding,
     Downloading,
     Error,
@@ -93,7 +94,7 @@ pub enum DownloadTaskState {
 }
 
 /// Download task status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DownloadTaskStatus {
     pub name: String,
     pub state: DownloadTaskState,
@@ -113,7 +114,7 @@ pub struct DownloadTaskStatus {
 }
 
 /// Download task file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DownloadTaskFile {
     pub index: i32,
     pub name: String,
@@ -206,7 +207,7 @@ pub enum ListTaskCategory {
 }
 
 /// Task list response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskResponse>,
     pub pagination: PaginationResults,
@@ -232,4 +233,3 @@ pub mod node_capability {
     pub const EXTRACT_ARCHIVE: i32 = 2;
     pub const REMOTE_DOWNLOAD: i32 = 3;
 }
-

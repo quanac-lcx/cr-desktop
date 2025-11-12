@@ -113,7 +113,8 @@ impl RequestOptions {
 }
 
 /// Callback type for credential refresh events
-pub type OnCredentialRefreshed = Arc<dyn Fn(Token) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type OnCredentialRefreshed =
+    Arc<dyn Fn(Token) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Main Cloudreve API client
 pub struct Client {
@@ -142,16 +143,16 @@ impl Client {
     }
 
     /// Set a callback to be invoked when credentials are refreshed
-    /// 
+    ///
     /// The callback receives the new token information and can perform async operations
     /// such as persisting tokens to storage.
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use std::sync::Arc;
     /// use std::pin::Pin;
     /// use std::future::Future;
-    /// 
+    ///
     /// client.set_on_credential_refreshed(Arc::new(|token| {
     ///     Box::pin(async move {
     ///         // Save token to storage
@@ -288,7 +289,7 @@ impl Client {
     ) -> ApiResult<R>
     where
         T: Serialize + ?Sized,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         let url = self.build_url(path);
         let mut request = self.http_client.request(method, &url);
@@ -322,9 +323,7 @@ impl Client {
         }
 
         // Return data
-        api_response
-            .data
-            .ok_or_else(|| ApiError::Other("API returned success but no data".to_string()))
+        Ok(api_response.data.unwrap_or_default())
     }
 
     /// Send an API request with automatic token refresh
@@ -337,7 +336,7 @@ impl Client {
     ) -> ApiResult<R>
     where
         T: Serialize + ?Sized,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         match self
             .send_internal(path, method.clone(), body, options.clone())
@@ -356,7 +355,7 @@ impl Client {
     /// Send a GET request
     pub async fn get<R>(&self, path: &str, options: RequestOptions) -> ApiResult<R>
     where
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         self.send::<(), R>(path, Method::GET, None, options).await
     }
@@ -365,7 +364,7 @@ impl Client {
     pub async fn post<T, R>(&self, path: &str, body: &T, options: RequestOptions) -> ApiResult<R>
     where
         T: Serialize,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         self.send(path, Method::POST, Some(body), options).await
     }
@@ -374,7 +373,7 @@ impl Client {
     pub async fn put<T, R>(&self, path: &str, body: &T, options: RequestOptions) -> ApiResult<R>
     where
         T: Serialize,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         self.send(path, Method::PUT, Some(body), options).await
     }
@@ -382,7 +381,7 @@ impl Client {
     /// Send a DELETE request
     pub async fn delete<R>(&self, path: &str, options: RequestOptions) -> ApiResult<R>
     where
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         self.send::<(), R>(path, Method::DELETE, None, options)
             .await
@@ -397,7 +396,7 @@ impl Client {
     ) -> ApiResult<R>
     where
         T: Serialize,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         self.send(path, Method::DELETE, Some(body), options).await
     }
@@ -406,7 +405,7 @@ impl Client {
     pub async fn patch<T, R>(&self, path: &str, body: &T, options: RequestOptions) -> ApiResult<R>
     where
         T: Serialize,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Default,
     {
         self.send(path, Method::PATCH, Some(body), options).await
     }

@@ -1,9 +1,9 @@
+use crate::models::common::PaginationResults;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::models::common::PaginationResults;
 
 /// User model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct User {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,17 +54,18 @@ pub struct PinedFile {
 }
 
 /// Share links visibility level
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ShareLinksInProfileLevel {
     #[serde(rename = "")]
+    #[default]
     PublicShareOnly,
     AllShare,
     HideShare,
 }
 
 /// Authentication token
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Token {
     pub access_token: String,
     pub refresh_token: String,
@@ -73,7 +74,7 @@ pub struct Token {
 }
 
 /// Login response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LoginResponse {
     pub user: User,
     pub token: Token,
@@ -102,7 +103,7 @@ pub struct RefreshTokenRequest {
 }
 
 /// User capacity information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Capacity {
     pub total: i64,
     pub used: i64,
@@ -110,7 +111,7 @@ pub struct Capacity {
 }
 
 /// User settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_expires: Option<String>,
@@ -218,7 +219,7 @@ pub struct StoragePack {
 }
 
 /// Credit change log entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditChangeLog {
     pub changed_at: String,
     pub diff: i32,
@@ -226,7 +227,7 @@ pub struct CreditChangeLog {
 }
 
 /// Credit change log response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditChangeLogResponse {
     pub changes: Vec<CreditChangeLog>,
     pub pagination: PaginationResults,
@@ -291,4 +292,3 @@ pub mod group_permission {
     pub const IGNORE_FILE_PERMISSION: i32 = 16;
     pub const UNIQUE_DIRECT_LINK: i32 = 17;
 }
-

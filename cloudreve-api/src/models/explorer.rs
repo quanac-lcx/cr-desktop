@@ -26,7 +26,7 @@ pub mod file_type {
 }
 
 /// File response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileResponse {
     #[serde(rename = "type")]
     pub file_type: i32,
@@ -55,7 +55,7 @@ pub struct FileResponse {
 }
 
 /// Folder summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FolderSummary {
     pub size: i64,
     pub files: i32,
@@ -65,7 +65,7 @@ pub struct FolderSummary {
 }
 
 /// Extended file information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExtendedInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_policy: Option<StoragePolicy>,
@@ -84,7 +84,7 @@ pub struct ExtendedInfo {
 }
 
 /// Direct link
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DirectLink {
     pub id: String,
     pub created_at: String,
@@ -93,7 +93,7 @@ pub struct DirectLink {
 }
 
 /// Entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Entity {
     pub id: String,
     #[serde(rename = "type")]
@@ -109,7 +109,7 @@ pub struct Entity {
 }
 
 /// Share information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Share {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -149,9 +149,10 @@ pub struct Share {
 }
 
 /// Storage policy type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyType {
+    #[default]
     Local,
     Remote,
     Oss,
@@ -167,7 +168,7 @@ pub enum PolicyType {
 }
 
 /// Storage policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoragePolicy {
     pub id: String,
     pub name: String,
@@ -197,7 +198,7 @@ pub struct StoragePolicy {
 }
 
 /// List response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListResponse {
     pub files: Vec<FileResponse>,
     pub pagination: PaginationResults,
@@ -219,7 +220,7 @@ pub struct ListResponse {
 }
 
 /// Navigator properties
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NavigatorProps {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
@@ -229,7 +230,7 @@ pub struct NavigatorProps {
 }
 
 /// Explorer view settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExplorerView {
     pub page_size: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,7 +246,7 @@ pub struct ExplorerView {
 }
 
 /// File thumbnail response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileThumbResponse {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -352,14 +353,14 @@ pub struct FileURLService {
 }
 
 /// File URL response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileURLResponse {
     pub urls: Vec<EntityURLResponse>,
     pub expires: String,
 }
 
 /// Entity URL response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EntityURLResponse {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -395,7 +396,7 @@ pub struct FileUpdateService {
 }
 
 /// Upload credential
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UploadCredential {
     pub session_id: String,
     pub expires: i64,

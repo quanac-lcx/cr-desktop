@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Pagination results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PaginationResults {
     pub page: i32,
     pub page_size: i32,

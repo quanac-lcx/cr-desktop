@@ -1,7 +1,7 @@
+use crate::models::user::User;
+use crate::models::vas::{GroupSku, PaymentSetting, StorageProduct};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::models::user::User;
-use crate::models::vas::{PaymentSetting, StorageProduct, GroupSku};
 
 /// Captcha type
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,7 +15,7 @@ pub enum CaptchaType {
 }
 
 /// Site configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SiteConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
@@ -122,7 +122,7 @@ pub struct SiteConfig {
 }
 
 /// Captcha response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CaptchaResponse {
     pub ticket: String,
     pub image: String,
@@ -142,4 +142,3 @@ pub struct CreateAbuseReportService {
     #[serde(flatten)]
     pub captcha: Option<HashMap<String, serde_json::Value>>,
 }
-
