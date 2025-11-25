@@ -175,10 +175,10 @@ impl ShellServices {
         unsafe {
             // Create and register the class factory
             let factory: IClassFactory =
-                TestExplorerCommandFactory::new(self.drive_manager.clone()).into();
+                CrExplorerCommandFactory::new(self.drive_manager.clone()).into();
 
             let cookie = CoRegisterClassObject(
-                &CLSID_TEST_EXPLORER_COMMAND,
+                &CLSID_EXPLORER_COMMAND,
                 &factory,
                 CLSCTX_LOCAL_SERVER,
                 REGCLS_MULTIPLEUSE,
