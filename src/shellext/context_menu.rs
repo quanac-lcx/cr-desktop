@@ -1,6 +1,6 @@
 // Context menu handler for Windows Explorer
 // This implements a COM object that provides a custom context menu item
-
+use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -35,15 +35,17 @@ struct SubCommandsData {
 #[implement(IEnumExplorerCommand)]
 pub struct SubCommands {
     inner: Mutex<SubCommandsData>,
+    drive_manager: Arc<DriveManager>,
 }
 
 impl SubCommands {
-    pub fn new(commands: Vec<IExplorerCommand>) -> Self {
+    pub fn new(drive_manager: Arc<DriveManager>, commands: Vec<IExplorerCommand>) -> Self {
         Self {
             inner: Mutex::new(SubCommandsData {
                 commands,
                 current: 0,
             }),
+            drive_manager: drive_manager.clone(),
         }
     }
 }
@@ -57,6 +59,7 @@ impl IEnumExplorerCommand_Impl for SubCommands_Impl {
                 commands: inner.commands.clone(),
                 current: inner.current,
             }),
+            drive_manager: self.drive_manager.clone(),
         })
         .to_interface())
     }
@@ -85,7 +88,8 @@ impl IEnumExplorerCommand_Impl for SubCommands_Impl {
         let mut total_count = 0u32;
 
         while count > 0 && inner.current < inner.commands.len() {
-            let command = ComObject::new(inner.commands[inner.current].clone());
+            let command: ComObject<ViewOnlineCommandHandler> =
+                ComObject::new(ViewOnlineCommandHandler::new(self.drive_manager.clone()).into());
             unsafe {
                 commands.write(Some(command.to_interface()));
                 tracing::trace!(target: "shellext::context_menu:sub_commands", "Next command written");
@@ -129,6 +133,7 @@ impl IEnumExplorerCommand_Impl for SubCommands_Impl {
 pub struct ViewOnlineCommandHandler {
     drive_manager: Arc<DriveManager>,
     images_path: String,
+    site: Option<IUnknown>,
 }
 
 impl ViewOnlineCommandHandler {
@@ -136,6 +141,7 @@ impl ViewOnlineCommandHandler {
         Self {
             drive_manager,
             images_path: get_images_path().unwrap_or_default(),
+            site: None,
         }
     }
 }
@@ -278,9 +284,10 @@ impl IExplorerCommand_Impl for CrExplorerCommandHandler_Impl {
 
     fn EnumSubCommands(&self) -> Result<IEnumExplorerCommand> {
         tracing::trace!(target: "shellext::context_menu", "EnumSubCommands called");
-        Ok(SubCommands::new(vec![
-            ViewOnlineCommandHandler::new(self.drive_manager.clone()).into(),
-        ])
+        Ok(SubCommands::new(
+            self.drive_manager.clone(),
+            vec![ViewOnlineCommandHandler::new(self.drive_manager.clone()).into()],
+        )
         .into())
     }
 }
