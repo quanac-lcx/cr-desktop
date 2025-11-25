@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cloudreve_api::{
+    ApiError,
     api::{ExplorerApi, explorer::ExplorerApiExt},
     models::{
         explorer::{DeleteFileService, FileResponse, FileURLService, metadata},
@@ -13,7 +14,11 @@ use cloudreve_api::{
     },
 };
 use notify_debouncer_full::notify::{Event, EventKind};
-use std::{ops::Range, path::PathBuf};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 use tokio::sync::oneshot::Sender;
 const PAGE_SIZE: i32 = 1000;
 
@@ -271,52 +276,182 @@ impl Mount {
         Ok(())
     }
 
+    /// Process filesystem delete events by synchronizing deletions with the remote server
+    /// and updating the local inventory.
+    ///
+    /// This function:
+    /// 1. Converts local paths to remote URIs
+    /// 2. Sends batch delete request to the server
+    /// 3. Handles partial failures in batch operations
+    /// 4. Updates local inventory for successfully deleted files
     pub async fn process_fs_delete_events(&self, events: Vec<Event>) -> Result<()> {
-        tracing::debug!(target: "drive::commands", events = ?events, "Processing FS delete events");
+        tracing::debug!(
+            target: "drive::commands",
+            event_count = events.len(),
+            "Processing filesystem delete events"
+        );
 
-        let config = self.config.read().await;
-        let remote_base = config.remote_path.clone();
-        let sync_path = config.sync_path.clone();
-        drop(config);
+        // Extract configuration once to avoid repeated lock acquisition
+        let (sync_path, remote_base) = {
+            let config = self.config.read().await;
+            (config.sync_path.clone(), config.remote_path.to_string())
+        };
 
-        let uris: Vec<String> = events
+        // Build mapping between URIs and their corresponding local paths
+        let path_uri_mappings = self.build_path_uri_mappings(&events, &sync_path, &remote_base);
+
+        if path_uri_mappings.is_empty() {
+            tracing::warn!(target: "drive::commands", "No valid URIs to delete");
+            return Ok(());
+        }
+
+        let uris: Vec<String> = path_uri_mappings.keys().cloned().collect();
+
+        tracing::info!(
+            target: "drive::commands",
+            uri_count = uris.len(),
+            "Sending batch delete request to server"
+        );
+
+        // Attempt to delete files on the remote server
+        let delete_result = self
+            .cr_client
+            .delete_files(&DeleteFileService {
+                uris: uris.clone(),
+                unlink: None,
+                skip_soft_delete: None,
+            })
+            .await;
+
+        // Determine which files were successfully deleted
+        let successful_paths = match delete_result {
+            Ok(_) => {
+                tracing::info!(
+                    target: "drive::commands",
+                    count = uris.len(),
+                    "Successfully deleted all files from server"
+                );
+                // All deletions succeeded
+                path_uri_mappings.values().cloned().collect()
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "drive::commands",
+                    error = %e,
+                    "Batch delete operation failed"
+                );
+                self.handle_delete_error(e, &path_uri_mappings)?
+            }
+        };
+
+        // Update local inventory to reflect successful deletions
+        if !successful_paths.is_empty() {
+            self.update_inventory_for_deletions(&successful_paths)
+                .context("Failed to update local inventory after deletions")?;
+        }
+
+        Ok(())
+    }
+
+    /// Build a mapping from remote URIs to local paths for the given events.
+    /// Logs warnings for any paths that cannot be converted to URIs.
+    fn build_path_uri_mappings(
+        &self,
+        events: &[Event],
+        sync_path: &Path,
+        remote_base: &str,
+    ) -> HashMap<String, PathBuf> {
+        events
             .iter()
             .flat_map(|event| &event.paths)
             .filter_map(|path| {
-                match local_path_to_cr_uri(path.clone(), sync_path.clone(), remote_base.clone()) {
-                    Ok(uri) => Some(uri.to_string()),
+                match local_path_to_cr_uri(
+                    path.clone(),
+                    sync_path.to_path_buf(),
+                    remote_base.to_string(),
+                ) {
+                    Ok(uri) => Some((uri.to_string(), path.clone())),
                     Err(e) => {
                         tracing::warn!(
                             target: "drive::commands",
                             path = %path.display(),
                             error = %e,
-                            "Failed to convert local path to Cloudreve URI"
+                            "Failed to convert local path to remote URI"
                         );
                         None
                     }
                 }
             })
+            .collect()
+    }
+
+    /// Handle deletion errors and determine which paths were successfully deleted.
+    /// Returns the list of paths that were successfully deleted despite partial failures.
+    fn handle_delete_error(
+        &self,
+        error: ApiError,
+        path_uri_mappings: &HashMap<String, PathBuf>,
+    ) -> Result<Vec<PathBuf>> {
+        match error {
+            ApiError::BatchError {
+                message: _,
+                aggregated_errors: Some(errors),
+            } => {
+                // Collect failed URIs
+                let failed_uris: std::collections::HashSet<_> = errors.keys().collect();
+
+                tracing::warn!(
+                    target: "drive::commands",
+                    failed_count = failed_uris.len(),
+                    total_count = path_uri_mappings.len(),
+                    "Partial batch delete failure"
+                );
+
+                // Return paths that weren't in the failed set
+                let successful_paths = path_uri_mappings
+                    .iter()
+                    .filter(|(uri, _)| !failed_uris.contains(uri))
+                    .map(|(_, path)| path.clone())
+                    .collect();
+
+                Ok(successful_paths)
+            }
+            _ => {
+                // For non-batch errors, all operations failed
+                tracing::error!(
+                    target: "drive::commands",
+                    error = %error,
+                    "Complete batch delete failure - no files were deleted"
+                );
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Update the local inventory to remove entries for successfully deleted paths.
+    fn update_inventory_for_deletions(&self, paths: &[PathBuf]) -> Result<()> {
+        let path_strs: Vec<&str> = paths
+            .iter()
+            .filter_map(|path| {
+                path.to_str().or_else(|| {
+                    tracing::warn!(
+                        target: "drive::commands",
+                        path = ?path,
+                        "Cannot convert path to string for inventory update"
+                    );
+                    None
+                })
+            })
             .collect();
 
-        if !uris.is_empty() {
-            let delete_res = self
-                .cr_client
-                .delete_files(&DeleteFileService {
-                    uris: uris.clone(),
-                    unlink: None,
-                    skip_soft_delete: None,
-                })
-                .await;
-
-            match delete_res {
-                Ok(_) => {
-                    tracing::debug!(target: "drive::commands", uris = ?uris, "Deleted files");
-                }
-                Err(e) => {
-                    tracing::error!(target: "drive::commands", uris = ?uris, error = %e, "Failed to delete files");
-                    return Err(e.into());
-                }
-            };
+        if !path_strs.is_empty() {
+            let count = path_strs.len();
+            self.inventory.batch_delete_by_path(path_strs)?;
+            tracing::debug!(
+                target: "drive::commands",
+                count = count,
+                "Updated local inventory after deletions"
+            );
         }
 
         Ok(())

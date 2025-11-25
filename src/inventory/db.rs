@@ -369,26 +369,38 @@ impl InventoryDb {
         Ok(results)
     }
 
-    /// Delete file metadata by local path
-    pub fn delete_by_path(&self, local_path: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let rows_affected = conn.execute(
-            "DELETE FROM file_metadata WHERE local_path = ?1",
-            params![local_path],
-        )?;
+    /// Batch delete file metadata by local path
+    pub fn batch_delete_by_path(&self, local_path: Vec<&str>) -> Result<bool> {
+        // Batch delete items by paths, delete exact matched path, also all path under the given path
+        if local_path.is_empty() {
+            return Ok(false);
+        }
 
-        Ok(rows_affected > 0)
-    }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
 
-    /// Delete all file metadata for a specific drive
-    pub fn delete_by_drive(&self, drive_id: &Uuid) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
-        let rows_affected = conn.execute(
-            "DELETE FROM file_metadata WHERE drive_id = ?1",
-            params![drive_id.to_string()],
-        )?;
+        let mut total_affected = 0;
 
-        Ok(rows_affected)
+        for path in local_path {
+            // Delete the exact path
+            let rows_affected = tx.execute(
+                "DELETE FROM file_metadata WHERE local_path = ?1",
+                params![path],
+            )?;
+            total_affected += rows_affected;
+
+            // Delete all paths under this path (children)
+            // Add a path separator to ensure we only match paths that are under this directory
+            let path_prefix = format!("{}/", path);
+            let rows_affected = tx.execute(
+                "DELETE FROM file_metadata WHERE local_path LIKE ?1",
+                params![format!("{}%", path_prefix)],
+            )?;
+            total_affected += rows_affected;
+        }
+
+        tx.commit()?;
+        Ok(total_affected > 0)
     }
 
     /// Get total count of entries in the database
