@@ -1,30 +1,44 @@
+use anyhow::{Context, Result};
 use std::{
+    ffi::OsStr,
     fmt::Debug,
-    fs::File,
+    fs::{self, File},
+    io,
     mem::{self, MaybeUninit},
     ops::{Bound, Range, RangeBounds},
     os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, RawHandle},
     path::Path,
     ptr,
+    time::{Duration, SystemTime},
 };
-
 use widestring::U16CString;
 use windows::{
     Win32::{
         Foundation::{
-            BOOL, CloseHandle, E_HANDLE, ERROR_NOT_A_CLOUD_FILE, HANDLE, INVALID_HANDLE_VALUE,
+            BOOL, CloseHandle, E_HANDLE, ERROR_FILE_NOT_FOUND, ERROR_NOT_A_CLOUD_FILE,
+            ERROR_PATH_NOT_FOUND, FILETIME, HANDLE, INVALID_HANDLE_VALUE,
         },
-        Storage::CloudFilters::{
-            self, CF_CONVERT_FLAGS, CF_FILE_RANGE, CF_OPEN_FILE_FLAGS, CF_PIN_STATE,
-            CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO, CF_SET_PIN_FLAGS,
-            CF_UPDATE_FLAGS, CfCloseHandle, CfConvertToPlaceholder, CfGetPlaceholderInfo,
-            CfGetPlaceholderRangeInfo, CfGetWin32HandleFromProtectedHandle, CfHydratePlaceholder,
-            CfOpenFileWithOplock, CfReferenceProtectedHandle, CfReleaseProtectedHandle,
-            CfRevertPlaceholder, CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder,
+        Storage::{
+            CloudFilters::{
+                self, CF_CONVERT_FLAGS, CF_FILE_RANGE, CF_OPEN_FILE_FLAGS, CF_PIN_STATE,
+                CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO,
+                CF_PLACEHOLDER_STATE, CF_SET_PIN_FLAGS, CF_UPDATE_FLAGS, CfCloseHandle,
+                CfConvertToPlaceholder, CfGetPlaceholderInfo, CfGetPlaceholderRangeInfo,
+                CfGetPlaceholderStateFromFileInfo, CfGetPlaceholderStateFromFindData,
+                CfGetWin32HandleFromProtectedHandle, CfHydratePlaceholder, CfOpenFileWithOplock,
+                CfReferenceProtectedHandle, CfReleaseProtectedHandle, CfRevertPlaceholder,
+                CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder,
+            },
+            FileSystem::{
+                FILE_ATTRIBUTE_DIRECTORY, FIND_FIRST_EX_FLAGS, FindClose, FindExInfoBasic,
+                FindExInfoStandard, FindExSearchNameMatch, FindFirstFileA, FindFirstFileExA,
+                FindFirstFileExW, WIN32_FIND_DATAA, WIN32_FIND_DATAW,
+            },
         },
     },
-    core::{self, PCWSTR},
+    core::{self, Error as WindowsError, PCWSTR},
 };
+use windows_core::PCSTR;
 
 use crate::cfapi::{metadata::Metadata, usn::Usn};
 
@@ -345,10 +359,157 @@ impl Default for ConvertOptions {
     }
 }
 
+fn should_suppress_placeholder_error(err: &WindowsError) -> bool {
+    let code = err.code();
+    code == ERROR_FILE_NOT_FOUND.to_hresult() || code == ERROR_PATH_NOT_FOUND.to_hresult()
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaceholderState {
+    state: CF_PLACEHOLDER_STATE,
+}
+
+impl PlaceholderState {
+    pub fn from_find_data(fdata: &WIN32_FIND_DATAA) -> Self {
+        Self {
+            state: unsafe { CfGetPlaceholderStateFromFindData(fdata) },
+        }
+    }
+
+    // The file or directory whose FileAttributes and ReparseTag examined by the API is a placeholder.
+    pub fn is_placeholder(&self) -> bool {
+        (self.state & CloudFilters::CF_PLACEHOLDER_STATE_PLACEHOLDER).0 != 0
+    }
+
+    // The directory is both a placeholder directory as well as the sync root.
+    pub fn sync_root(&self) -> bool {
+        (self.state & CloudFilters::CF_PLACEHOLDER_STATE_SYNC_ROOT).0 != 0
+    }
+
+    pub fn essential_prop_present(&self) -> bool {
+        (self.state & CloudFilters::CF_PLACEHOLDER_STATE_ESSENTIAL_PROP_PRESENT).0 != 0
+    }
+
+    // The file or directory must be a placeholder and its content in sync with the cloud.
+    pub fn in_sync(&self) -> bool {
+        (self.state & CloudFilters::CF_PLACEHOLDER_STATE_IN_SYNC).0 != 0
+    }
+
+    pub fn partial(&self) -> bool {
+        (self.state & CloudFilters::CF_PLACEHOLDER_STATE_PARTIAL).0 != 0
+    }
+
+    // The file or directory must be a placeholder and its content is not fully present locally.
+    pub fn partial_on_disk(&self) -> bool {
+        (self.state & CloudFilters::CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK).0 != 0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalFileInfo {
+    pub exists: bool,
+    pub is_directory: bool,
+    pub file_size: Option<u64>,
+    pub last_modified: Option<SystemTime>,
+    pub placeholder_state: Option<PlaceholderState>,
+}
+
+impl LocalFileInfo {
+    pub fn missing() -> Self {
+        Self {
+            exists: false,
+            is_directory: false,
+            file_size: None,
+            last_modified: None,
+            placeholder_state: None,
+        }
+    }
+
+    pub fn from_path(path: &Path) -> Result<Self> {
+        let mut find_data = unsafe { std::mem::zeroed::<WIN32_FIND_DATAA>() };
+        let handle = match unsafe {
+            FindFirstFileExA(
+                PCSTR::from_raw(path.to_str().unwrap_or_default().as_ptr()),
+                FindExInfoBasic,
+                &mut find_data as *mut _ as *mut _,
+                FindExSearchNameMatch,
+                None,
+                FIND_FIRST_EX_FLAGS(0),
+            )
+        } {
+            Ok(handle) => handle,
+            Err(_) => return Ok(Self::missing()),
+        };
+
+        // Close the handle after use
+        unsafe { FindClose(handle) };
+
+        let is_directory = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0) != 0;
+        let file_size = (!is_directory)
+            .then_some(((find_data.nFileSizeHigh as u64) << 32) | find_data.nFileSizeLow as u64);
+        let last_modified = filetime_to_system_time(find_data.ftLastWriteTime);
+        let placeholder_state = PlaceholderState::from_find_data(&find_data);
+
+        Ok(Self {
+            exists: true,
+            is_directory,
+            file_size,
+            last_modified,
+            placeholder_state: Some(placeholder_state),
+        })
+    }
+
+    pub fn in_sync(&self) -> bool {
+        self.placeholder_state
+            .as_ref()
+            .map(|state| state.in_sync())
+            .unwrap_or(false)
+    }
+
+    pub fn is_placeholder(&self) -> bool {
+        self.placeholder_state
+            .as_ref()
+            .map(|state: &PlaceholderState| state.is_placeholder())
+            .unwrap_or(false)
+    }
+
+    pub fn pinned(&self) -> bool {
+        // TODO: implemente
+        false
+    }
+
+    pub fn is_folder_populated(&self) -> bool {
+        // TODO: investgate more
+        !self.is_placeholder()
+    }
+}
+
+fn filetime_to_system_time(filetime: FILETIME) -> Option<SystemTime> {
+    const TICKS_PER_SECOND: u64 = 10_000_000;
+    const SECONDS_BETWEEN_EPOCHS: u64 = 11_644_473_600;
+
+    if filetime.dwLowDateTime == 0 && filetime.dwHighDateTime == 0 {
+        return None;
+    }
+
+    let ticks = ((filetime.dwHighDateTime as u64) << 32) | (filetime.dwLowDateTime as u64);
+    if ticks < SECONDS_BETWEEN_EPOCHS * TICKS_PER_SECOND {
+        return None;
+    }
+
+    let secs_since_windows_epoch = ticks / TICKS_PER_SECOND;
+    let subsecs_ticks = ticks % TICKS_PER_SECOND;
+    let secs_since_unix_epoch = secs_since_windows_epoch - SECONDS_BETWEEN_EPOCHS;
+    let nanos = subsecs_ticks * 100;
+
+    Some(SystemTime::UNIX_EPOCH + Duration::new(secs_since_unix_epoch, nanos as u32))
+}
+
 #[derive(Clone)]
 pub struct PlaceholderInfo {
     data: Vec<u8>,
     info: *const CF_PLACEHOLDER_STANDARD_INFO,
+    // Additional file info from GetFileInformationByHandleEx
 }
 
 impl PlaceholderInfo {

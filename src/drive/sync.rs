@@ -1,7 +1,7 @@
 use crate::{
     cfapi::{
         metadata::Metadata,
-        placeholder::{PinState, Placeholder, PlaceholderInfo},
+        placeholder::{LocalFileInfo, PinState, Placeholder, PlaceholderInfo},
         placeholder_file::PlaceholderFile,
     },
     drive::{
@@ -184,156 +184,44 @@ pub enum SyncMode {
     FullHierarchy,
 }
 
-#[derive(Debug, Clone)]
-struct LocalPlaceholderState {
-    in_sync: bool,
-    pin_state: PinState,
-    on_disk_data_size: i64,
-    validated_data_size: i64,
-    modified_data_size: i64,
-}
-
-impl From<PlaceholderInfo> for LocalPlaceholderState {
-    fn from(info: PlaceholderInfo) -> Self {
-        Self {
-            in_sync: info.is_in_sync(),
-            pin_state: info.pin_state(),
-            on_disk_data_size: info.on_disk_data_size(),
-            validated_data_size: info.validated_data_size(),
-            modified_data_size: info.modified_data_size(),
-        }
-    }
-}
-
-impl LocalPlaceholderState {
-    fn is_hydrated(&self) -> bool {
-        self.on_disk_data_size > 0 || self.validated_data_size > 0
-    }
-}
-
-#[derive(Debug, Clone)]
-struct LocalFileInfo {
-    exists: bool,
-    is_directory: bool,
-    file_size: Option<u64>,
-    last_modified: Option<SystemTime>,
-    placeholder: Option<LocalPlaceholderState>,
-}
-
-impl LocalFileInfo {
-    fn missing() -> Self {
-        Self {
-            exists: false,
-            is_directory: false,
-            file_size: None,
-            last_modified: None,
-            placeholder: None,
-        }
-    }
-
-    fn from_path(path: &Path) -> Result<Self> {
-        let metadata = match fs::metadata(path) {
-            Ok(metadata) => metadata,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self::missing());
-            }
-            Err(err) => {
-                return Err(err).context(format!(
-                    "failed to read local metadata for {}",
-                    path.display()
-                ));
-            }
-        };
-
-        let is_directory = metadata.is_dir();
-        let file_size = (!is_directory).then_some(metadata.len());
-        let last_modified = metadata.modified().ok();
-
-        let placeholder = match Placeholder::options().open(path) {
-            Ok(handle) => match handle.info() {
-                Ok(Some(info)) => Some(LocalPlaceholderState::from(info)),
-                Ok(None) => None,
-                Err(err) => {
-                    return Err(err).context(format!(
-                        "failed to query placeholder info for {}",
-                        path.display()
-                    ));
-                }
-            },
-            Err(err) => {
-                if should_suppress_placeholder_error(&err) {
-                    tracing::trace!(
-                        target: "drive::sync",
-                        path = %path.display(),
-                        error = %err,
-                        "Placeholder handle unavailable"
-                    );
-                } else {
-                    tracing::warn!(
-                        target: "drive::sync",
-                        path = %path.display(),
-                        error = %err,
-                        "Failed to open placeholder handle"
-                    );
-                }
-                None
-            }
-        };
-
-        Ok(Self {
-            exists: true,
-            is_directory,
-            file_size,
-            last_modified,
-            placeholder,
-        })
-    }
-
-    fn is_pinned(&self) -> bool {
-        self.placeholder
-            .as_ref()
-            .map(|state| state.pin_state == PinState::Pinned)
-            .unwrap_or(false)
-    }
-
-    fn is_hydrated(&self) -> bool {
-        if !self.exists {
-            return false;
-        }
-
-        match self.placeholder.as_ref() {
-            Some(state) => {
-                if self.is_directory {
-                    state.is_hydrated()
-                } else if let Some(size) = self.file_size {
-                    state.is_hydrated() && state.on_disk_data_size >= size as i64
-                } else {
-                    state.is_hydrated()
-                }
-            }
-            None => true,
-        }
-    }
-}
-
-fn should_suppress_placeholder_error(err: &WindowsError) -> bool {
-    let code = err.code();
-    code == ERROR_FILE_NOT_FOUND.to_hresult() || code == ERROR_PATH_NOT_FOUND.to_hresult()
-}
-
 const CONFLICT_PREFIX: &str = "__conflict__";
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum SyncAction {
-    CreatePlaceholderAndInventory { path: PathBuf, remote: FileResponse },
-    UpdateInventoryFromRemote { path: PathBuf, remote: FileResponse },
-    ConvertLocalToPlaceholder { path: PathBuf, remote: FileResponse },
-    RefreshPinnedHydratedContent { path: PathBuf, remote: FileResponse },
-    QueueUpload { path: PathBuf, reason: UploadReason },
-    DeleteLocalAndInventory { path: PathBuf, is_directory: bool },
-    CreateRemoteFolder { path: PathBuf },
-    RenameLocalWithConflict { original: PathBuf, renamed: PathBuf },
+    CreatePlaceholderAndInventory {
+        path: PathBuf,
+        remote: FileResponse,
+    },
+    // Update inventory and placehodler metadata, conver to placehodler if it's not one
+    UpdateInventoryFromRemote {
+        path: PathBuf,
+        remote: FileResponse,
+        invalidate_all: bool,
+    },
+    ConvertLocalToPlaceholder {
+        path: PathBuf,
+        remote: FileResponse,
+    },
+    QueueUpload {
+        path: PathBuf,
+        reason: UploadReason,
+    },
+    QueueDownload {
+        path: PathBuf,
+        remote: FileResponse,
+    },
+    DeleteLocalAndInventory {
+        path: PathBuf,
+        is_directory: bool,
+    },
+    CreateRemoteFolder {
+        path: PathBuf,
+    },
+    RenameLocalWithConflict {
+        original: PathBuf,
+        renamed: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -428,21 +316,15 @@ impl fmt::Display for SyncAggregateError {
 
 impl std::error::Error for SyncAggregateError {}
 
-fn local_has_pending_changes(local: &LocalFileInfo, _inventory: Option<&FileMetadata>) -> bool {
-    if let Some(placeholder) = local.placeholder.as_ref() {
-        if placeholder.modified_data_size > 0 || !placeholder.in_sync {
-            return true;
-        }
-    }
+// fn local_has_pending_changes(local: &LocalFileInfo, _inventory: Option<&FileMetadata>) -> bool {
+//     !local.is_placeholder() || !local.in_sync() ||
 
-    // if let (Some(last_modified), Some(entry)) = (local.last_modified, inventory) {
-    //     if let Some(last_modified_secs) = system_time_to_unix_secs(last_modified) {
-    //         return last_modified_secs > entry.updated_at;
-    //     }
-    // }
-
-    false
-}
+//     // if let (Some(last_modified), Some(entry)) = (local.last_modified, inventory) {
+//     //     if let Some(last_modified_secs) = system_time_to_unix_secs(last_modified) {
+//     //         return last_modified_secs > entry.updated_at;
+//     //     }
+//     // }
+// }
 
 fn system_time_to_unix_secs(time: SystemTime) -> Option<i64> {
     match time.duration_since(SystemTime::UNIX_EPOCH) {
@@ -842,6 +724,7 @@ impl Mount {
             plan.actions.push(SyncAction::UpdateInventoryFromRemote {
                 path: path.clone(),
                 remote: remote.clone(),
+                invalidate_all: false,
             });
             self.maybe_enqueue_walk_for_directory(path, mode, local, false, false, plan);
             return;
@@ -863,7 +746,7 @@ impl Mount {
         }
 
         if local.is_directory {
-            let hydrated = local.is_hydrated();
+            let hydrated = local.is_folder_populated();
             if !hydrated {
                 plan.actions.push(SyncAction::DeleteLocalAndInventory {
                     path: path.clone(),
@@ -878,20 +761,19 @@ impl Mount {
             return;
         }
 
-        let hydrated = local.is_hydrated();
-        let local_dirty = local_has_pending_changes(local, inventory);
-
-        if hydrated && local_dirty {
-            plan.actions.push(SyncAction::QueueUpload {
-                path: path.clone(),
-                reason: UploadReason::RemoteMissing,
-            });
-        } else {
+        if local.is_placeholder() && local.in_sync() {
             plan.actions.push(SyncAction::DeleteLocalAndInventory {
                 path: path.clone(),
                 is_directory: false,
             });
+            return;
         }
+
+        // TODO: search queue if not exist:
+        plan.actions.push(SyncAction::QueueUpload {
+            path: path.clone(),
+            reason: UploadReason::RemoteMissing,
+        });
     }
 
     fn plan_file_actions(
@@ -911,34 +793,13 @@ impl Mount {
             plan.actions.push(SyncAction::UpdateInventoryFromRemote {
                 path: path.clone(),
                 remote: remote.clone(),
+                invalidate_all: false,
             });
             return;
         }
 
-        let hydrated = local.is_hydrated();
-        let local_dirty = local_has_pending_changes(local, inventory);
-        let pinned = local.is_pinned();
-
-        if hydrated && !local_dirty {
-            plan.actions.push(SyncAction::UpdateInventoryFromRemote {
-                path: path.clone(),
-                remote: remote.clone(),
-            });
-            if !pinned {
-                plan.actions.push(SyncAction::ConvertLocalToPlaceholder {
-                    path: path.clone(),
-                    remote: remote.clone(),
-                });
-            } else {
-                plan.actions.push(SyncAction::RefreshPinnedHydratedContent {
-                    path: path.clone(),
-                    remote: remote.clone(),
-                });
-            }
-            return;
-        }
-
-        if hydrated && local_dirty {
+        if !local.is_placeholder() || !local.in_sync() {
+            // TODO: if Search upload queue and found no tasks:
             plan.actions.push(SyncAction::QueueUpload {
                 path: path.clone(),
                 reason: UploadReason::RemoteMismatch,
@@ -946,10 +807,18 @@ impl Mount {
             return;
         }
 
+        let pinned = local.pinned();
         plan.actions.push(SyncAction::UpdateInventoryFromRemote {
             path: path.clone(),
             remote: remote.clone(),
+            invalidate_all: local.pinned(),
         });
+        if pinned {
+            plan.actions.push(SyncAction::QueueDownload {
+                path: path.clone(),
+                remote: remote.clone(),
+            });
+        }
     }
 
     fn maybe_enqueue_walk_for_directory(
@@ -986,7 +855,7 @@ impl Mount {
             return;
         }
 
-        if (force_diff || local.is_hydrated()) && parent_mode == SyncMode::PathOnly {
+        if (force_diff || local.is_folder_populated()) && parent_mode == SyncMode::PathOnly {
             self.insert_walk_request(
                 path.clone(),
                 SyncMode::PathOnly,
