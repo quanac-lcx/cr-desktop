@@ -410,6 +410,31 @@ impl Mount {
             parent.display()
         ));
 
+        // For sync root, directly walk to descendants
+        let sync_root = {
+            let config = self.config.read().await;
+            config.sync_path.clone()
+        };
+        if paths.len() == 1 && paths[0] == sync_root {
+            tracing::debug!(
+                target: "drive::sync",
+                id = %self.id,
+                parent = %parent.display(),
+                "Syncing sync root"
+            );
+            self.process_walk_requests(
+                vec![WalkRequest {
+                    path: sync_root,
+                    mode,
+                    reason: WalkReason::ModePropagation,
+                    timing: WalkTiming::Immediate,
+                }],
+                &mut aggregate_error,
+            )
+            .await;
+            return aggregate_error.into_result();
+        }
+
         let remote_files = self.fetch_remote_file_infos(parent, paths).await?;
         tracing::debug!(
             target: "drive::sync",
@@ -508,35 +533,6 @@ impl Mount {
             target_remote_paths.insert(remote_uri.to_string(), path.clone());
         }
 
-        if target_remote_paths.len() == 1 {
-            let (remote_uri, local_path) = target_remote_paths.iter().next().unwrap();
-            let request = GetFileInfoService {
-                uri: Some(remote_uri.clone()),
-                ..Default::default()
-            };
-
-            match self.cr_client.get_file_info(&request).await {
-                Ok(file_info) => {
-                    let mut entries = HashMap::new();
-                    entries.insert(local_path.clone(), file_info);
-                    return Ok(entries);
-                }
-                Err(ApiError::ApiError { code, .. }) if code == ErrorCode::NotFound as i32 => {
-                    tracing::warn!(
-                        target: "drive::sync",
-                        id = %self.id,
-                        path = %local_path.display(),
-                        remote_path = %remote_uri,
-                        "Remote entry missing during sync"
-                    );
-                    return Ok(HashMap::new());
-                }
-                Err(err) => {
-                    return Err(err.into());
-                }
-            }
-        }
-
         let parent_remote_uri =
             local_path_to_cr_uri(parent.clone(), sync_root.clone(), remote_base.clone())
                 .with_context(|| {
@@ -550,14 +546,31 @@ impl Mount {
         let mut previous_response = None;
 
         while !remaining.is_empty() {
-            let response = self
+            let response = match self
                 .cr_client
                 .list_files_all(
                     previous_response.as_ref(),
                     parent_uri_str.as_str(),
                     REMOTE_PAGE_SIZE,
                 )
-                .await?;
+                .await
+            {
+                Ok(resp) => resp,
+                Err(ApiError::ApiError { code, .. })
+                    if code == ErrorCode::ParentNotExist as i32 =>
+                {
+                    tracing::debug!(
+                        target: "drive::sync",
+                        id = %self.id,
+                        parent = %parent.display(),
+                        "Remote parent directory missing during fetch"
+                    );
+                    return Ok(HashMap::new());
+                }
+                Err(err) => {
+                    return Err(err.into());
+                }
+            };
 
             for file in &response.res.files {
                 if let Some(local_path) = target_remote_paths.get(&file.path) {
@@ -569,7 +582,7 @@ impl Mount {
                 }
             }
 
-            let has_more = response.more;
+            let has_more = response.more && !remaining.is_empty();
             previous_response = Some(response);
 
             if !has_more {
@@ -951,33 +964,26 @@ impl Mount {
 
     async fn collect_child_targets(&self, directory: &PathBuf) -> Result<Vec<PathBuf>> {
         let dir_clone = directory.clone();
-        let local_children = task::spawn_blocking(move || -> Result<Vec<PathBuf>> {
-            let mut children = Vec::new();
-            match fs::read_dir(&dir_clone) {
-                Ok(entries) => {
-                    for entry in entries.flatten() {
-                        children.push(entry.path());
-                    }
-                }
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    return Err(err).context(format!(
-                        "failed to enumerate local directory {}",
-                        dir_clone.display()
-                    ));
+        let mut children = Vec::new();
+        match fs::read_dir(&dir_clone) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    children.push(entry.path());
                 }
             }
-            Ok(children)
-        })
-        .await??;
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).context(format!(
+                    "failed to enumerate local directory {}",
+                    dir_clone.display()
+                ));
+            }
+        };
 
         let remote_children = self.list_remote_children(directory).await?;
 
         let mut dedup: HashSet<PathBuf> = HashSet::new();
-        for child in local_children
-            .into_iter()
-            .chain(remote_children.into_iter())
-        {
+        for child in children.into_iter().chain(remote_children.into_iter()) {
             dedup.insert(child);
         }
 
@@ -1034,7 +1040,9 @@ impl Mount {
                 .await
             {
                 Ok(resp) => resp,
-                Err(ApiError::ApiError { code, .. }) if code == ErrorCode::NotFound as i32 => {
+                Err(ApiError::ApiError { code, .. })
+                    if code == ErrorCode::ParentNotExist as i32 =>
+                {
                     tracing::debug!(
                         target: "drive::sync",
                         id = %self.id,

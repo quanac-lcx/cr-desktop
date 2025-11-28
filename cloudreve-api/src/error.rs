@@ -21,6 +21,7 @@ pub struct ApiResponse<T> {
 pub enum ErrorCode {
     Success = 0,
     Continue = 203,
+    ParentNotExist = 40016,
     CredentialInvalid = 40020,
     IncorrectPassword = 40069,
     LockConflict = 40073,

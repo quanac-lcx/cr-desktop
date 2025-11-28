@@ -441,8 +441,8 @@ impl LocalFileInfo {
             Ok(handle) => handle,
             Err(err) => {
                 tracing::debug!(target: "cfapi::placeholder", "error getting file info from path {}: {:?}", path.display(), err);
-                return Ok(Self::missing())
-            },
+                return Ok(Self::missing());
+            }
         };
 
         // Close the handle after use
