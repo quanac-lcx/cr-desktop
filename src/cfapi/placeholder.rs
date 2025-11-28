@@ -483,8 +483,10 @@ impl LocalFileInfo {
     }
 
     pub fn is_folder_populated(&self) -> bool {
-        // TODO: investgate more
-        !self.is_placeholder()
+        self.is_placeholder() && self.is_directory && !self.placeholder_state
+            .as_ref()
+            .map(|state: &PlaceholderState| state.partial_on_disk())
+            .unwrap_or(false)
     }
 }
 

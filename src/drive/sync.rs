@@ -256,6 +256,23 @@ struct SyncPlan {
     walk_requests: Vec<WalkRequest>,
 }
 
+// Debug print for SyncPlan
+impl fmt::Debug for SyncPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "SyncPlan ({} actions, {} walks):", self.actions.len(), self.walk_requests.len())?;
+        
+        for (i, action) in self.actions.iter().enumerate() {
+            writeln!(f, "  [{}] {:?}", i, action)?;
+        }
+        
+        for (i, walk) in self.walk_requests.iter().enumerate() {
+            writeln!(f, "  [W{}] {:?}", i, walk)?;
+        }
+        
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct SyncErrorEntry {
     path: PathBuf,
@@ -476,7 +493,7 @@ impl Mount {
             walks = plan.walk_requests.len(),
             "Planned sync actions"
         );
-        tracing::trace!(target: "drive::sync", plan = ?plan.actions, "Planned actions detail");
+        tracing::trace!(target: "drive::sync", plan = ?plan, "Planned actions detail");
 
         let (immediate_walks, deferred_walks): (Vec<_>, Vec<_>) = plan
             .walk_requests
@@ -856,7 +873,7 @@ impl Mount {
         if matches!(
             parent_mode,
             SyncMode::FullHierarchy | SyncMode::PathAndFirstLayer
-        ) {
+        ) && local.is_folder_populated() {
             let mode = next_child_mode(parent_mode);
             self.insert_walk_request(
                 path.clone(),
@@ -868,7 +885,7 @@ impl Mount {
             return;
         }
 
-        if (force_diff || local.is_folder_populated()) && parent_mode == SyncMode::PathOnly {
+        if force_diff && parent_mode == SyncMode::PathOnly {
             self.insert_walk_request(
                 path.clone(),
                 SyncMode::PathOnly,

@@ -11,7 +11,7 @@ accessible:
 noAccess:
   en-US: "No Access"
   zh-CN: "无访问权限"
-syncSelectred:
+syncSelectedNow:
   en-US: "Sync Selected Now"
   zh-CN: "立即同步选中对象"
 syncNow:
