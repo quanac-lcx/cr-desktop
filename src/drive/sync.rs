@@ -1,11 +1,8 @@
 use crate::{
-    cfapi::{
-        metadata::Metadata,
-        placeholder::{LocalFileInfo, PinState, Placeholder, PlaceholderInfo},
-        placeholder_file::PlaceholderFile,
-    },
+    cfapi::{metadata::Metadata, placeholder::LocalFileInfo, placeholder_file::PlaceholderFile},
     drive::{
         mounts::Mount,
+        placeholder::CrPlaceholder,
         utils::{local_path_to_cr_uri, remote_path_to_local_relative_path},
     },
     inventory::{FileMetadata, MetadataEntry},
@@ -14,10 +11,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use cloudreve_api::{
     ApiError,
-    api::{ExplorerApi, explorer::ExplorerApiExt},
+    api::explorer::ExplorerApiExt,
     error::ErrorCode,
     models::{
-        explorer::{FileResponse, GetFileInfoService, file_type, metadata},
+        explorer::{FileResponse, file_type, metadata},
         uri::CrUri,
     },
 };
@@ -35,10 +32,6 @@ use std::{
 };
 use tokio::task;
 use uuid::Uuid;
-use windows::{
-    Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND},
-    core::Error as WindowsError,
-};
 
 pub fn cloud_file_to_placeholder(
     file: &FileResponse,
@@ -104,6 +97,7 @@ pub fn cloud_file_to_metadata_entry(
     .with_updated_at(last_modified)
     .with_permissions(file.permission.as_ref().unwrap_or(&String::new()).clone())
     .with_shared(file.shared.unwrap_or(false))
+    .with_size(file.size)
     .with_etag(
         file.primary_entity
             .as_ref()
@@ -259,16 +253,21 @@ struct SyncPlan {
 // Debug print for SyncPlan
 impl fmt::Debug for SyncPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SyncPlan ({} actions, {} walks):", self.actions.len(), self.walk_requests.len())?;
-        
+        writeln!(
+            f,
+            "SyncPlan ({} actions, {} walks):",
+            self.actions.len(),
+            self.walk_requests.len()
+        )?;
+
         for (i, action) in self.actions.iter().enumerate() {
             writeln!(f, "  [{}] {:?}", i, action)?;
         }
-        
+
         for (i, walk) in self.walk_requests.iter().enumerate() {
             writeln!(f, "  [W{}] {:?}", i, walk)?;
         }
-        
+
         Ok(())
     }
 }
@@ -343,6 +342,7 @@ impl std::error::Error for SyncAggregateError {}
 //     // }
 // }
 
+#[allow(dead_code)]
 fn system_time_to_unix_secs(time: SystemTime) -> Option<i64> {
     match time.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => Some(duration.as_secs() as i64),
@@ -495,19 +495,180 @@ impl Mount {
         );
         tracing::trace!(target: "drive::sync", plan = ?plan, "Planned actions detail");
 
-        let (immediate_walks, deferred_walks): (Vec<_>, Vec<_>) = plan
-            .walk_requests
+        let SyncPlan {
+            actions,
+            walk_requests,
+        } = plan;
+        let (immediate_walks, deferred_walks): (Vec<_>, Vec<_>) = walk_requests
             .into_iter()
             .partition(|request| request.timing == WalkTiming::Immediate);
 
         self.process_walk_requests(immediate_walks, &mut aggregate_error)
             .await;
 
-        // TODO: Execute generated actions
+        if let Err(err) = self
+            .process_sync_plan_actions_list(&actions, &mut aggregate_error)
+            .await
+        {
+            aggregate_error.push(parent.clone(), err);
+        }
 
         self.process_walk_requests(deferred_walks, &mut aggregate_error)
             .await;
         aggregate_error.into_result()
+    }
+
+    async fn process_sync_plan_actions_list(
+        &self,
+        actions: &[SyncAction],
+        aggregate_error: &mut SyncAggregateError,
+    ) -> Result<()> {
+        let (drive_id, sync_root) = {
+            let config = self.config.read().await;
+            (Uuid::parse_str(&config.id)?, config.sync_path.clone())
+        };
+
+        for action in actions {
+            self.process_action(action, &sync_root, &drive_id, aggregate_error)
+                .await;
+        }
+
+        Ok(())
+    }
+
+    async fn process_action(
+        &self,
+        action: &SyncAction,
+        sync_root: &PathBuf,
+        drive_id: &Uuid,
+        aggregate_error: &mut SyncAggregateError,
+    ) {
+        match action {
+            SyncAction::CreatePlaceholderAndInventory { path, remote } => {
+                let cr_placeholder =
+                    CrPlaceholder::new(path.clone(), sync_root.clone(), drive_id.clone());
+                if let Err(err) = cr_placeholder
+                    .with_remote_file(remote)
+                    .commit(self.inventory.clone())
+                {
+                    tracing::error!(
+                        target: "drive::sync",
+                        id = %self.id,
+                        path = %path.display(),
+                        error = %err,
+                        "Failed to create placeholder and inventory"
+                    );
+                    aggregate_error.push(path.clone(), err);
+                }
+            }
+            SyncAction::UpdateInventoryFromRemote {
+                path,
+                remote,
+                invalidate_all,
+            } => {}
+            SyncAction::ConvertLocalToPlaceholder { path, remote: _ } => {
+                tracing::warn!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    path = %path.display(),
+                    "ConvertLocalToPlaceholder not yet implemented"
+                );
+                // TODO: Implement conversion of local file to placeholder
+            }
+            SyncAction::QueueUpload { path, reason } => {
+                tracing::info!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    path = %path.display(),
+                    reason = ?reason,
+                    "Queueing upload task"
+                );
+                // TODO: Queue upload task via task manager
+            }
+            SyncAction::QueueDownload { path, remote: _ } => {
+                tracing::info!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    path = %path.display(),
+                    "Queueing download task"
+                );
+                // TODO: Queue download task via task manager
+            }
+            SyncAction::DeleteLocalAndInventory { path, is_directory } => {
+                tracing::info!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    path = %path.display(),
+                    is_directory = is_directory,
+                    "Deleting local file/folder and inventory entry"
+                );
+
+                // Delete from filesystem
+                let delete_result = if *is_directory {
+                    std::fs::remove_dir_all(path)
+                } else {
+                    std::fs::remove_file(path)
+                };
+
+                if let Err(err) = delete_result {
+                    if err.kind() != io::ErrorKind::NotFound {
+                        tracing::error!(
+                            target: "drive::sync",
+                            id = %self.id,
+                            path = %path.display(),
+                            error = %err,
+                            "Failed to delete local file/folder"
+                        );
+                        aggregate_error.push(path.clone(), anyhow::Error::from(err));
+                        return;
+                    }
+                }
+
+                // Delete from inventory
+                if let Some(path_str) = path.to_str() {
+                    if let Err(err) = self.inventory.batch_delete_by_path(vec![path_str]) {
+                        tracing::error!(
+                            target: "drive::sync",
+                            id = %self.id,
+                            path = %path.display(),
+                            error = %err,
+                            "Failed to delete inventory entry"
+                        );
+                        aggregate_error.push(path.clone(), err);
+                    }
+                }
+            }
+            SyncAction::CreateRemoteFolder { path } => {
+                tracing::info!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    path = %path.display(),
+                    "Creating remote folder"
+                );
+                // TODO: Implement remote folder creation via API
+            }
+            SyncAction::RenameLocalWithConflict { original, renamed } => {
+                tracing::info!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    original = %original.display(),
+                    renamed = %renamed.display(),
+                    "Renaming local file to resolve conflict"
+                );
+
+                if let Err(err) = std::fs::rename(original, renamed) {
+                    tracing::error!(
+                        target: "drive::sync",
+                        id = %self.id,
+                        original = %original.display(),
+                        renamed = %renamed.display(),
+                        error = %err,
+                        "Failed to rename local file"
+                    );
+                    aggregate_error.push(original.clone(), anyhow::Error::from(err));
+                }
+            }
+        }
     }
 
     async fn fetch_local_file_infos(
@@ -873,7 +1034,8 @@ impl Mount {
         if matches!(
             parent_mode,
             SyncMode::FullHierarchy | SyncMode::PathAndFirstLayer
-        ) && local.is_folder_populated() {
+        ) && local.is_folder_populated()
+        {
             let mode = next_child_mode(parent_mode);
             self.insert_walk_request(
                 path.clone(),

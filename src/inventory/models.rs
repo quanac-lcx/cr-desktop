@@ -17,6 +17,7 @@ pub struct FileMetadata {
     pub props: Option<serde_json::Value>,
     pub permissions: String,
     pub shared: bool,
+    pub size: i64,
 }
 
 /// Entry for inserting or updating file metadata
@@ -31,6 +32,7 @@ pub struct MetadataEntry {
     pub etag: String,
     pub permissions: String,
     pub shared: bool,
+    pub size: i64,
     pub metadata: HashMap<String, String>,
     pub props: Option<serde_json::Value>,
 }
@@ -54,6 +56,7 @@ impl MetadataEntry {
             props: None,
             permissions: String::new(),
             shared: false,
+            size: 0,
         }
     }
 
@@ -64,6 +67,11 @@ impl MetadataEntry {
 
     pub fn with_shared(mut self, shared: bool) -> Self {
         self.shared = shared;
+        self
+    }
+
+    pub fn with_size(mut self, size: i64) -> Self {
+        self.size = size;
         self
     }
 
@@ -90,5 +98,24 @@ impl MetadataEntry {
     pub fn with_props(mut self, props: serde_json::Value) -> Self {
         self.props = Some(props);
         self
+    }
+}
+
+impl From<&FileMetadata> for MetadataEntry {
+    fn from(file_metadata: &FileMetadata) -> Self {
+        Self {
+            drive_id: file_metadata.drive_id.clone(),
+            is_folder: file_metadata.is_folder,
+            created_at: file_metadata.created_at,
+            updated_at: file_metadata.updated_at.clone(),
+            local_path: file_metadata.local_path.clone(),
+            remote_uri: file_metadata.remote_uri.clone(),
+            etag: file_metadata.etag.clone(),
+            permissions: file_metadata.permissions.clone(),
+            shared: file_metadata.shared,
+            metadata: file_metadata.metadata.clone(),
+            props: file_metadata.props.clone(),
+            size: file_metadata.size,
+        }
     }
 }

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS file_metadata (
     props TEXT,
     permissions TEXT,
     shared BOOLEAN NOT NULL,
+    size INTEGER NOT NULL,
     UNIQUE(local_path)
 );
 
@@ -89,8 +90,8 @@ impl InventoryDb {
             tx.execute(
                 r#"
                 INSERT INTO file_metadata 
-                (drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                (drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared, size)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 "#,
                 params![
                     entry.drive_id.to_string(),
@@ -104,6 +105,7 @@ impl InventoryDb {
                     props_json,
                     entry.permissions,
                     entry.shared,
+                    entry.size,
                 ],
             )?;
         }
@@ -136,8 +138,8 @@ impl InventoryDb {
         conn.execute(
             r#"
             INSERT INTO file_metadata 
-            (drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            (drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared, size)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,?11,?12 )
             "#,
             params![
                 entry.drive_id.to_string(),
@@ -151,6 +153,7 @@ impl InventoryDb {
                 props_json,
                 entry.permissions,
                 entry.shared,
+                entry.size,
             ],
         )?;
 
@@ -180,7 +183,8 @@ impl InventoryDb {
                 metadata = ?6, 
                 props = ?7,
                 permissions = ?8,
-                shared = ?9
+                shared = ?9,
+                size = ?11
             WHERE local_path = ?10
             "#,
             params![
@@ -194,6 +198,7 @@ impl InventoryDb {
                 entry.permissions,
                 entry.shared,
                 entry.local_path,
+                entry.size,
             ],
         )?;
 
@@ -215,8 +220,8 @@ impl InventoryDb {
         conn.execute(
             r#"
             INSERT INTO file_metadata 
-            (drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            (drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared, size)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(local_path) DO UPDATE SET
                 drive_id = excluded.drive_id,
                 is_folder = excluded.is_folder,
@@ -226,7 +231,8 @@ impl InventoryDb {
                 metadata = excluded.metadata,
                 props = excluded.props,
                 permissions = excluded.permissions,
-                shared = excluded.shared
+                shared = excluded.shared,
+                size = excluded.size
             "#,
             params![
                 entry.drive_id.to_string(),
@@ -253,7 +259,7 @@ impl InventoryDb {
         let result = conn
             .query_row(
                 r#"
-                SELECT id, drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared
+                SELECT id, drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared, size
                 FROM file_metadata
                 WHERE local_path = ?1
                 "#,
@@ -298,75 +304,13 @@ impl InventoryDb {
                             })?,
                         permissions: row.get(10)?,
                         shared: row.get(11)?,
+                        size: row.get(12)?,
                     })
                 },
             )
             .optional()?;
 
         Ok(result)
-    }
-
-    /// Query all file metadata for a specific drive
-    pub fn query_by_drive(&self, drive_id: &Uuid) -> Result<Vec<FileMetadata>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, drive_id, is_folder, local_path, remote_uri, created_at, updated_at, etag, metadata, props, permissions, shared
-            FROM file_metadata
-            WHERE drive_id = ?1
-            ORDER BY local_path
-            "#,
-        )?;
-
-        let rows = stmt.query_map(params![drive_id.to_string()], |row| {
-            let drive_id_str: String = row.get(1)?;
-            let is_folder: bool = row.get(2)?;
-            let metadata_json: String = row.get(78)?;
-            let props_json: Option<String> = row.get(9)?;
-
-            Ok(FileMetadata {
-                id: row.get(0)?,
-                drive_id: Uuid::parse_str(&drive_id_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        1,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?,
-                is_folder: row.get(2)?,
-                local_path: row.get(3)?,
-                remote_uri: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                etag: row.get(7)?,
-                metadata: serde_json::from_str(&metadata_json).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        7,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?,
-                props: props_json
-                    .map(|s| serde_json::from_str(&s))
-                    .transpose()
-                    .map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            8,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?,
-                permissions: row.get(10)?,
-                shared: row.get(11)?,
-            })
-        })?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
-
-        Ok(results)
     }
 
     /// Batch delete file metadata by local path
