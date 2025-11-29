@@ -266,6 +266,168 @@ impl InventoryDb {
             .context("Failed to delete task queue record")?;
         Ok(())
     }
+
+    /// Cancel all pending/running tasks matching a path or its descendants.
+    /// Returns the list of task IDs that were cancelled.
+    pub fn cancel_tasks_by_path(&self, drive_id: &str, path: &str) -> Result<Vec<String>> {
+        let mut conn = self.connection()?;
+
+        // Find tasks that match the exact path or are descendants (path starts with "path/")
+        let prefix = format!("{}/", path);
+        let active_statuses = vec![
+            TaskStatus::Pending.as_str().to_string(),
+            TaskStatus::Running.as_str().to_string(),
+        ];
+
+        let matching_tasks: Vec<TaskRow> = task_queue_dsl::task_queue
+            .filter(task_queue_dsl::drive_id.eq(drive_id))
+            .filter(task_queue_dsl::status.eq_any(&active_statuses))
+            .filter(
+                task_queue_dsl::local_path
+                    .eq(path)
+                    .or(task_queue_dsl::local_path.like(format!("{}%", prefix))),
+            )
+            .load(&mut conn)
+            .context("Failed to query tasks by path")?;
+
+        let task_ids: Vec<String> = matching_tasks.iter().map(|t| t.id.clone()).collect();
+
+        if !task_ids.is_empty() {
+            let cancelled_status = TaskStatus::Cancelled.as_str().to_string();
+            let now = chrono::Utc::now().timestamp();
+
+            diesel::update(task_queue_dsl::task_queue.filter(task_queue_dsl::id.eq_any(&task_ids)))
+                .set((
+                    task_queue_dsl::status.eq(&cancelled_status),
+                    task_queue_dsl::updated_at.eq(now),
+                ))
+                .execute(&mut conn)
+                .context("Failed to cancel tasks by path")?;
+        }
+
+        Ok(task_ids)
+    }
+
+    /// Get task status by task ID
+    pub fn get_task_status(&self, task_id: &str) -> Result<Option<TaskStatus>> {
+        let mut conn = self.connection()?;
+        let row: Option<String> = task_queue_dsl::task_queue
+            .filter(task_queue_dsl::id.eq(task_id))
+            .select(task_queue_dsl::status)
+            .first(&mut conn)
+            .optional()
+            .context("Failed to query task status")?;
+
+        match row {
+            Some(status_str) => Ok(TaskStatus::from_str(&status_str)),
+            None => Ok(None),
+        }
+    }
+
+    /// Rename or move a file/folder and update all its descendants.
+    /// Uses two UPDATE queries: one for the exact path, one for descendants.
+    /// Only replaces the prefix portion to avoid issues with duplicate path segments.
+    ///
+    /// Returns the number of rows updated.
+    pub fn rename_path(&self, old_path: &str, new_path: &str) -> Result<usize> {
+        if old_path == new_path {
+            return Ok(0);
+        }
+
+        let mut conn = self.connection()?;
+        let now = Utc::now().timestamp();
+        let old_prefix = format!("{}/", old_path);
+        let new_prefix = format!("{}/", new_path);
+        let old_prefix_len = old_prefix.len() as i32;
+
+        let total = (&mut *conn)
+            .transaction::<usize, diesel::result::Error, _>(|tx_conn| {
+                // Update the exact path match (the item itself)
+                let exact_match = diesel::sql_query(
+                    "UPDATE file_metadata SET local_path = ?1, updated_at = ?2 \
+                     WHERE local_path = ?3",
+                )
+                .bind::<diesel::sql_types::Text, _>(new_path)
+                .bind::<diesel::sql_types::BigInt, _>(now)
+                .bind::<diesel::sql_types::Text, _>(old_path)
+                .execute(tx_conn)?;
+
+                // Update descendants: replace only the prefix portion
+                // new_prefix || substr(local_path, old_prefix_len + 1)
+                // This safely replaces just the beginning of the path
+                let descendants = diesel::sql_query(
+                    "UPDATE file_metadata SET local_path = ?1 || substr(local_path, ?2), updated_at = ?3 \
+                     WHERE local_path LIKE ?4",
+                )
+                .bind::<diesel::sql_types::Text, _>(&new_prefix)
+                .bind::<diesel::sql_types::Integer, _>(old_prefix_len + 1)
+                .bind::<diesel::sql_types::BigInt, _>(now)
+                .bind::<diesel::sql_types::Text, _>(format!("{}%", old_prefix))
+                .execute(tx_conn)?;
+
+                Ok(exact_match + descendants)
+            })
+            .context("Failed to rename path in inventory")?;
+
+        Ok(total)
+    }
+
+    /// Rename or move multiple file/folder paths and their descendants in a single transaction.
+    /// Each entry in the `renames` slice is a tuple of (old_path, new_path).
+    /// Only replaces the prefix portion to avoid issues with duplicate path segments.
+    ///
+    /// Returns the total number of rows updated.
+    pub fn batch_rename_paths(&self, renames: &[(&str, &str)]) -> Result<usize> {
+        if renames.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = self.connection()?;
+        let now = Utc::now().timestamp();
+
+        let total = (&mut *conn)
+            .transaction::<usize, diesel::result::Error, _>(|tx_conn| {
+                let mut total_affected: usize = 0;
+
+                for (old_path, new_path) in renames {
+                    if old_path == new_path {
+                        continue;
+                    }
+
+                    let old_prefix = format!("{}/", old_path);
+                    let new_prefix = format!("{}/", new_path);
+                    let old_prefix_len = old_prefix.len() as i32;
+
+                    // Update the exact path match
+                    let exact_match = diesel::sql_query(
+                        "UPDATE file_metadata SET local_path = ?1, updated_at = ?2 \
+                         WHERE local_path = ?3",
+                    )
+                    .bind::<diesel::sql_types::Text, _>(*new_path)
+                    .bind::<diesel::sql_types::BigInt, _>(now)
+                    .bind::<diesel::sql_types::Text, _>(*old_path)
+                    .execute(tx_conn)?;
+
+                    // Update descendants: replace only the prefix portion
+                    let descendants = diesel::sql_query(
+                        "UPDATE file_metadata SET local_path = ?1 || substr(local_path, ?2), updated_at = ?3 \
+                         WHERE local_path LIKE ?4",
+                    )
+                    .bind::<diesel::sql_types::Text, _>(&new_prefix)
+                    .bind::<diesel::sql_types::Integer, _>(old_prefix_len + 1)
+                    .bind::<diesel::sql_types::BigInt, _>(now)
+                    .bind::<diesel::sql_types::Text, _>(format!("{}%", old_prefix))
+                    .execute(tx_conn)?;
+
+                    total_affected += exact_match + descendants;
+                }
+
+                Ok(total_affected)
+            })
+            .context("Failed to batch rename paths in inventory")?;
+
+        Ok(total)
+    }
 }
 
 fn run_migrations(database_url: &str) -> Result<()> {
@@ -282,7 +444,6 @@ struct FileMetadataRow {
     drive_id: String,
     is_folder: bool,
     local_path: String,
-    remote_uri: String,
     created_at: i64,
     updated_at: i64,
     etag: String,
@@ -299,7 +460,6 @@ struct TaskRow {
     drive_id: String,
     task_type: String,
     local_path: String,
-    remote_uri: Option<String>,
     status: String,
     progress: f64,
     total_bytes: i64,
@@ -329,7 +489,6 @@ impl TryFrom<TaskRow> for TaskRecord {
             drive_id: row.drive_id,
             task_type: row.task_type,
             local_path: row.local_path,
-            remote_uri: row.remote_uri,
             status,
             progress: row.progress,
             total_bytes: row.total_bytes,
@@ -350,7 +509,6 @@ struct NewTaskRow {
     drive_id: String,
     task_type: String,
     local_path: String,
-    remote_uri: Option<String>,
     status: String,
     progress: f64,
     total_bytes: i64,
@@ -371,7 +529,6 @@ impl TryFrom<&NewTaskRecord> for NewTaskRow {
             drive_id: record.drive_id.clone(),
             task_type: record.task_type.clone(),
             local_path: record.local_path.clone(),
-            remote_uri: record.remote_uri.clone(),
             status: record.status.as_str().to_string(),
             progress: record.progress,
             total_bytes: record.total_bytes,
@@ -437,7 +594,6 @@ struct NewFileMetadata {
     drive_id: String,
     is_folder: bool,
     local_path: String,
-    remote_uri: String,
     created_at: i64,
     updated_at: i64,
     etag: String,
@@ -453,7 +609,6 @@ struct NewFileMetadata {
 struct FileMetadataChangeset {
     drive_id: String,
     is_folder: bool,
-    remote_uri: String,
     updated_at: i64,
     etag: String,
     metadata: String,
@@ -481,7 +636,6 @@ impl TryFrom<FileMetadataRow> for FileMetadata {
             drive_id: Uuid::parse_str(&row.drive_id).context("Failed to parse drive_id column")?,
             is_folder: row.is_folder,
             local_path: row.local_path,
-            remote_uri: row.remote_uri,
             created_at: row.created_at,
             updated_at: row.updated_at,
             etag: row.etag,
@@ -502,7 +656,6 @@ impl TryFrom<&MetadataEntry> for NewFileMetadata {
             drive_id: entry.drive_id.to_string(),
             is_folder: entry.is_folder,
             local_path: entry.local_path.clone(),
-            remote_uri: entry.remote_uri.clone(),
             created_at: entry.created_at,
             updated_at: entry.updated_at,
             etag: entry.etag.clone(),
@@ -526,7 +679,6 @@ impl FileMetadataChangeset {
         Ok(Self {
             drive_id: entry.drive_id.to_string(),
             is_folder: entry.is_folder,
-            remote_uri: entry.remote_uri.clone(),
             updated_at: updated_at_ts,
             etag: entry.etag.clone(),
             metadata: serde_json::to_string(&entry.metadata)

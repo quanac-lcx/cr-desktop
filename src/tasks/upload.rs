@@ -1,11 +1,14 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     cfapi::{
         metadata::{self, Metadata},
         placeholder::{ConvertOptions, LocalFileInfo, OpenOptions, Placeholder, UpdateOptions},
     },
-    drive::{sync::cloud_file_to_metadata_entry, utils::notify_shell_change},
+    drive::{
+        sync::cloud_file_to_metadata_entry,
+        utils::{local_path_to_cr_uri, notify_shell_change},
+    },
     inventory::{FileMetadata, InventoryDb, MetadataEntry},
     tasks::{TaskQueue, queue::QueuedTask},
 };
@@ -25,7 +28,8 @@ pub struct UploadTask<'a> {
     inventory: Arc<InventoryDb>,
     cr_client: Arc<Client>,
     drive_id: &'a str,
-
+    sync_path: PathBuf,
+    remote_base: String,
     task: &'a QueuedTask,
     local_file: Option<LocalFileInfo>,
     inventory_meta: Option<FileMetadata>,
@@ -37,6 +41,8 @@ impl<'a> UploadTask<'a> {
         cr_client: Arc<Client>,
         drive_id: &'a str,
         task: &'a QueuedTask,
+        sync_path: PathBuf,
+        remote_base: String,
     ) -> Self {
         Self {
             inventory,
@@ -45,6 +51,8 @@ impl<'a> UploadTask<'a> {
             local_file: None,
             inventory_meta: None,
             task,
+            sync_path,
+            remote_base,
         }
     }
     // Upload a local file/folder to cloud
@@ -102,16 +110,18 @@ impl<'a> UploadTask<'a> {
             "Creating empty file/folder"
         );
         let local_file = self.local_file.as_ref().unwrap();
+        let uri = local_path_to_cr_uri(
+            self.task.payload.local_path.clone(),
+            self.sync_path.clone(),
+            self.remote_base.clone(),
+        )
+        .context("failed to convert local path to cloudreve uri")?
+        .to_string();
         // Create file in remote
         let res = self
             .cr_client
             .create_file(&CreateFileService {
-                uri: self
-                    .task
-                    .payload
-                    .remote_uri
-                    .clone()
-                    .context("remote uri not found")?,
+                uri,
                 file_type: if local_file.is_directory {
                     "folder".to_string()
                 } else {

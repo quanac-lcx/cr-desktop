@@ -34,6 +34,8 @@ pub struct TaskQueue {
     pub drive_id: String,
     pub cr_client: Arc<Client>,
     pub inventory: Arc<InventoryDb>,
+    pub sync_path: PathBuf,
+    pub remote_base: String,
     config: TaskQueueConfig,
     semaphore: Arc<Semaphore>,
     command_tx: UnboundedSender<QueueCommand>,
@@ -44,6 +46,8 @@ pub struct TaskQueue {
     cancel_requested: AtomicBool,
     progress: DashMap<String, TaskProgress>,
     task_handles: DashMap<String, JoinHandle<()>>,
+    /// Maps task_id to local_path for running tasks, used for path-based cancellation
+    task_paths: DashMap<String, String>,
 }
 
 impl TaskQueue {
@@ -52,6 +56,8 @@ impl TaskQueue {
         cr_client: Arc<Client>,
         inventory: Arc<InventoryDb>,
         config: TaskQueueConfig,
+        sync_path: PathBuf,
+        remote_base: String,
     ) -> Arc<Self> {
         let drive_id = drive_id.into();
         let max_concurrent = config.max_concurrent.max(1);
@@ -62,6 +68,8 @@ impl TaskQueue {
             drive_id,
             inventory,
             cr_client,
+            sync_path,
+            remote_base,
             config: sanitized_config,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             command_tx,
@@ -72,6 +80,7 @@ impl TaskQueue {
             cancel_requested: AtomicBool::new(false),
             progress: DashMap::new(),
             task_handles: DashMap::new(),
+            task_paths: DashMap::new(),
         });
 
         queue.spawn_dispatcher(command_rx).await;
@@ -111,10 +120,6 @@ impl TaskQueue {
             payload.local_path_display(),
         )
         .with_priority(payload.priority);
-
-        if let Some(uri) = payload.remote_uri.clone() {
-            record = record.with_remote_uri(uri);
-        }
 
         match (payload.total_bytes, payload.processed_bytes) {
             (Some(total), Some(processed)) => {
@@ -198,7 +203,71 @@ impl TaskQueue {
 
         self.cancel_running_tasks().await;
         self.task_handles.clear();
+        self.task_paths.clear();
         self.progress.clear();
+    }
+
+    /// Cancel all tasks for a given path or its descendants.
+    /// This will:
+    /// 1. Mark pending tasks in inventory as cancelled
+    /// 2. Abort running tasks that match the path
+    /// 3. Tasks in the channel queue will check their status upon scheduling and exit early
+    ///
+    /// Returns the number of tasks that were cancelled.
+    pub async fn cancel_by_path(&self, path: impl AsRef<std::path::Path>) -> Result<usize> {
+        let path_str = path.as_ref().to_string_lossy().to_string();
+
+        info!(
+            target: "tasks::queue",
+            drive = %self.drive_id,
+            path = %path_str,
+            "Cancelling tasks by path"
+        );
+
+        // 1. Cancel pending tasks in inventory (this also marks running tasks as cancelled)
+        let cancelled_ids = self
+            .inventory
+            .cancel_tasks_by_path(&self.drive_id, &path_str)
+            .context("Failed to cancel tasks in inventory")?;
+
+        let cancelled_count = cancelled_ids.len();
+
+        // 2. Abort running task handles that match the path
+        let tasks_to_abort: Vec<String> = self
+            .task_paths
+            .iter()
+            .filter(|entry| {
+                let task_path = entry.value();
+                task_path == &path_str || task_path.starts_with(&format!("{}/", path_str))
+            })
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for task_id in tasks_to_abort {
+            if let Some((_, handle)) = self.task_handles.remove(&task_id) {
+                handle.abort();
+                debug!(
+                    target: "tasks::queue",
+                    drive = %self.drive_id,
+                    task_id = %task_id,
+                    "Aborted running task"
+                );
+            }
+            self.task_paths.remove(&task_id);
+            self.progress.remove(&task_id);
+        }
+
+        if cancelled_count > 0 {
+            info!(
+                target: "tasks::queue",
+                drive = %self.drive_id,
+                path = %path_str,
+                count = cancelled_count,
+                "Cancelled tasks by path"
+            );
+        }
+
+        Ok(cancelled_count)
     }
 
     async fn spawn_dispatcher(self: &Arc<Self>, command_rx: UnboundedReceiver<QueueCommand>) {
@@ -287,6 +356,39 @@ impl TaskQueue {
     }
 
     async fn execute_task(self: Arc<Self>, task: QueuedTask) {
+        // Check if task was cancelled while in the channel queue
+        match self.inventory.get_task_status(&task.task_id) {
+            Ok(Some(TaskStatus::Cancelled)) => {
+                debug!(
+                    target: "tasks::queue",
+                    drive = %self.drive_id,
+                    task_id = %task.task_id,
+                    "Task was cancelled before execution, skipping"
+                );
+                return;
+            }
+            Ok(Some(status)) if !status.is_active() => {
+                debug!(
+                    target: "tasks::queue",
+                    drive = %self.drive_id,
+                    task_id = %task.task_id,
+                    status = ?status,
+                    "Task is no longer active, skipping"
+                );
+                return;
+            }
+            Err(err) => {
+                warn!(
+                    target: "tasks::queue",
+                    drive = %self.drive_id,
+                    task_id = %task.task_id,
+                    error = %err,
+                    "Failed to check task status, proceeding with execution"
+                );
+            }
+            _ => {}
+        }
+
         if let Err(err) = self.inventory.update_task(
             &task.task_id,
             TaskUpdate {
@@ -303,6 +405,10 @@ impl TaskQueue {
             );
             return;
         }
+
+        // Register task path for path-based cancellation
+        self.task_paths
+            .insert(task.task_id.clone(), task.payload.local_path_display());
 
         self.register_progress_entry(&task).await;
 
@@ -340,7 +446,7 @@ impl TaskQueue {
                         "Failed to mark task as cancelled"
                     );
                 }
-                self.clear_progress_entry(&task.task_id).await;
+                self.cleanup_task_entry(&task.task_id).await;
                 return;
             }
             Err(err) => {
@@ -367,12 +473,12 @@ impl TaskQueue {
                         "Failed to persist task failure state"
                     );
                 }
-                self.clear_progress_entry(&task.task_id).await;
+                self.cleanup_task_entry(&task.task_id).await;
                 return;
             }
         }
 
-        self.clear_progress_entry(&task.task_id).await;
+        self.cleanup_task_entry(&task.task_id).await;
     }
 
     async fn run_placeholder_task(&self, task: &QueuedTask) -> Result<TaskRunState> {
@@ -392,6 +498,8 @@ impl TaskQueue {
                     self.cr_client.clone(),
                     self.drive_id.as_str(),
                     &task,
+                    self.sync_path.clone(),
+                    self.remote_base.clone(),
                 );
 
                 task_executor.execute().await?;
@@ -453,6 +561,11 @@ impl TaskQueue {
 
     async fn clear_progress_entry(&self, task_id: &str) {
         self.progress.remove(task_id);
+    }
+
+    async fn cleanup_task_entry(&self, task_id: &str) {
+        self.progress.remove(task_id);
+        self.task_paths.remove(task_id);
     }
 
     async fn resume_incomplete_tasks(self: &Arc<Self>) -> Result<()> {
@@ -539,6 +652,7 @@ impl TaskQueue {
             }
 
             self.progress.remove(&task_id);
+            self.task_paths.remove(&task_id);
         }
     }
 
@@ -549,10 +663,6 @@ impl TaskQueue {
         let mut payload = TaskPayload::new(kind, PathBuf::from(&record.local_path))
             .with_priority(record.priority)
             .with_task_id(record.id.clone());
-
-        if let Some(uri) = &record.remote_uri {
-            payload = payload.with_remote_uri(uri.clone());
-        }
 
         let total_bytes = record.total_bytes;
         let processed_bytes = record.processed_bytes;

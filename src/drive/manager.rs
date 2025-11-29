@@ -1,7 +1,7 @@
 use super::commands::ManagerCommand;
 use super::mounts::{DriveConfig, Mount};
 use crate::drive::commands::MountCommand;
-use crate::drive::utils::view_online_url;
+use crate::drive::utils::{local_path_to_cr_uri, view_online_url};
 use crate::inventory::InventoryDb;
 use anyhow::{Context, Result};
 use rust_i18n::t;
@@ -391,16 +391,21 @@ impl DriveManager {
             .context("Failed to query file metadata")?;
 
         let config = mount.get_config().await;
+        let (sync_path, remote_path) =
+            { (config.sync_path.clone(), config.remote_path.to_string()) };
+        let uri = local_path_to_cr_uri(path.clone(), sync_path, remote_path)
+            .context("failed to convert local path to cloudreve uri")?
+            .to_string();
 
         // Determine which URL to open
         let url = match file_meta {
             // If no metadata, assume it's the sync root, open folder
             None => view_online_url(&config.remote_path, None, &config)?,
-            Some(ref meta) if meta.is_folder => view_online_url(&meta.remote_uri, None, &config)?,
+            Some(ref meta) if meta.is_folder => view_online_url(&uri, None, &config)?,
             Some(ref meta) => {
                 use cloudreve_api::models::uri::CrUri;
-                let parent_path = CrUri::new(&meta.remote_uri)?.parent()?.to_string();
-                view_online_url(&parent_path, Some(&meta.remote_uri), &config)?
+                let parent_path = CrUri::new(&uri)?.parent()?.to_string();
+                view_online_url(&parent_path, Some(&uri), &config)?
             }
         };
 

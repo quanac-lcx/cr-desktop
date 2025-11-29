@@ -30,7 +30,6 @@ pub struct TaskPayload {
     pub task_id: Option<String>,
     pub kind: TaskKind,
     pub local_path: PathBuf,
-    pub remote_uri: Option<String>,
     pub priority: i32,
     pub total_bytes: Option<i64>,
     pub processed_bytes: Option<i64>,
@@ -43,7 +42,6 @@ impl TaskPayload {
             task_id: None,
             kind,
             local_path: local_path.into(),
-            remote_uri: None,
             priority: 0,
             total_bytes: None,
             processed_bytes: None,
@@ -61,11 +59,6 @@ impl TaskPayload {
 
     pub fn with_task_id(mut self, id: impl Into<String>) -> Self {
         self.task_id = Some(id.into());
-        self
-    }
-
-    pub fn with_remote_uri(mut self, remote_uri: impl Into<String>) -> Self {
-        self.remote_uri = Some(remote_uri.into());
         self
     }
 
@@ -89,10 +82,6 @@ impl TaskPayload {
         self.local_path.as_path().to_string_lossy().into_owned()
     }
 
-    pub fn remote_uri(&self) -> Option<&str> {
-        self.remote_uri.as_deref()
-    }
-
     pub fn custom_state(&self) -> Option<&Value> {
         self.custom_state.as_ref()
     }
@@ -103,7 +92,6 @@ pub struct TaskProgress {
     pub task_id: String,
     pub kind: TaskKind,
     pub local_path: String,
-    pub remote_uri: Option<String>,
     pub progress: f64,
     pub processed_bytes: Option<i64>,
     pub total_bytes: Option<i64>,
@@ -116,7 +104,6 @@ impl TaskProgress {
             task_id: task_id.into(),
             kind: payload.kind,
             local_path: payload.local_path_display(),
-            remote_uri: payload.remote_uri.clone(),
             progress: 0.0,
             processed_bytes: payload.processed_bytes,
             total_bytes: payload.total_bytes,

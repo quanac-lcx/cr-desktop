@@ -92,7 +92,6 @@ pub fn cloud_file_to_metadata_entry(
     Ok(MetadataEntry::new(
         drive_id.clone(),
         local_path_str.unwrap(),
-        file.path.clone(),
         file.file_type == file_type::FOLDER,
     )
     .with_created_at(created_at)

@@ -117,7 +117,6 @@ impl CrPlaceholder {
         self.file_meta = Some(FileMetadata {
             drive_id: self.drive_id,
             local_path: self.local_path.to_string_lossy().to_string(),
-            remote_uri: file_info.path.clone(),
             is_folder: file_info.file_type == file_type::FOLDER,
             created_at,
             updated_at,

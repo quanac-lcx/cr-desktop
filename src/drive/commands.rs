@@ -1,5 +1,5 @@
 use crate::{
-    cfapi::{filter::ticket, utility::WriteAt},
+    cfapi::{filter::ticket, placeholder::OpenOptions, utility::WriteAt},
     drive::{
         mounts::Mount,
         sync::{GroupedFsEvents, SyncMode},
@@ -72,6 +72,10 @@ pub enum MountCommand {
         source: PathBuf,
         target: PathBuf,
         response: Sender<Result<()>>,
+    },
+    Renamed {
+        source: PathBuf,
+        destination: PathBuf,
     },
 }
 
@@ -270,10 +274,14 @@ impl Mount {
             return Err(anyhow::anyhow!("thumbnail disabled for path: {:?}", path));
         }
 
-        let thumb_res = self
-            .cr_client
-            .get_file_thumb(file_meta.remote_uri.as_str(), None)
-            .await?;
+        let (sync_path, remote_base) = {
+            let config = self.config.read().await;
+            (config.sync_path.clone(), config.remote_path.to_string())
+        };
+        let uri = local_path_to_cr_uri(path.clone(), sync_path, remote_base)
+            .context("failed to convert local path to cloudreve uri")?
+            .to_string();
+        let thumb_res = self.cr_client.get_file_thumb(uri.as_str(), None).await?;
 
         // Download the thumbnail
         let thumb_url = thumb_res.url;
@@ -289,6 +297,49 @@ impl Mount {
         Ok(thumb_response.bytes().await?)
     }
 
+    pub async fn rename_completed(&self, source: PathBuf, destination: PathBuf) -> Result<()> {
+        // Commit rename in inventory
+        self.inventory
+            .rename_path(
+                source
+                    .to_str()
+                    .context("failed to convert source path to string")?,
+                destination
+                    .to_str()
+                    .context("failed to convert destination path to string")?,
+            )
+            .context("failed to rename path in inventory")?;
+
+        // Cancel ongoing/pending tasks
+        match self.task_queue.cancel_by_path(source.clone()).await {
+            Ok(0) => {
+                // Mark file as in-sync
+                match OpenOptions::new().write_access().exclusive().open(&source) {
+                    Ok(mut handle) => {
+                        if let Err(e) = handle.mark_in_sync(true, None) {
+                            tracing::error!(target: "drive::commands", error = %e, "Failed to mark as in-sync");
+                            return Err(e.into());
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        tracing::error!(target: "drive::commands", error = %e, "Failed to open file");
+                        Err(e.into())
+                    }
+                }
+            }
+            Ok(count) => {
+                tracing::info!(target: "drive::commands", path = %source.display(), count = count, "Cancelled tasks");
+                // TODO: trigger sync on moved file
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(target: "drive::commands", error = %e, "Failed to cancel tasks");
+                Err(e.into())
+            }
+        }
+    }
+
     pub async fn rename(&self, source: PathBuf, target: PathBuf) -> Result<()> {
         let (sync_path, remote_path) = {
             let config = self.config.read().await;
@@ -300,7 +351,6 @@ impl Mount {
             // Source is being moved out of sync root - block the remove event
             self.event_blocker
                 .register_once(&EventKind::Remove(RemoveKind::Any), source.clone());
-            // TODO: remove tasks related to src
             return Ok(());
         }
         if !source.starts_with(&sync_path) {
@@ -336,7 +386,8 @@ impl Mount {
                         &EventKind::Modify(ModifyKind::Name(RenameMode::To)),
                         target.clone(),
                     );
-                    // TODO: remove tasks related to src
+
+                    self.task_queue.cancel_by_path(source.clone()).await?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -370,7 +421,6 @@ impl Mount {
                     .register_once(&EventKind::Remove(RemoveKind::Any), source.clone());
                 self.event_blocker
                     .register_once(&EventKind::Create(CreateKind::Any), target.clone());
-                // TODO: remove tasks related to src
                 return Ok(());
             }
             Err(e) => {
@@ -420,7 +470,7 @@ impl Mount {
         }
 
         for (remote_uri, path) in path_uri_mappings {
-            let payload = TaskPayload::upload(path.clone()).with_remote_uri(remote_uri);
+            let payload = TaskPayload::upload(path.clone());
 
             self.task_queue
                 .enqueue(payload)

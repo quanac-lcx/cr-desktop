@@ -127,6 +127,8 @@ impl Mount {
             cr_client_arc.clone(),
             inventory.clone(),
             queue_config,
+            config.sync_path.clone(),
+            config.remote_path.clone(),
         )
         .await;
 
@@ -371,6 +373,19 @@ impl Mount {
                     let mount_id_clone = mount_id.clone();
                     spawn(async move {
                         s_clone.process_fs_events(events).await;
+                    });
+                }
+                MountCommand::Renamed {
+                    source,
+                    destination,
+                } => {
+                    let s_clone = s.clone();
+                    let mount_id_clone = mount_id.clone();
+                    spawn(async move {
+                        if let Err(e) = s_clone.rename_completed(source, destination).await {
+                            tracing::error!(target: "drive::mounts", id = %mount_id_clone, error = %e, "Failed to rename completed");
+                            return;
+                        }
                     });
                 }
             }

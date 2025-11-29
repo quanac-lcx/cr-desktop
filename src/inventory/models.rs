@@ -9,7 +9,6 @@ pub struct FileMetadata {
     pub drive_id: Uuid,
     pub is_folder: bool,
     pub local_path: String,
-    pub remote_uri: String,
     pub created_at: i64, // Unix timestamp
     pub updated_at: i64, // Unix timestamp
     pub etag: String,
@@ -28,7 +27,6 @@ pub struct MetadataEntry {
     pub created_at: i64, // Unix timestamp
     pub updated_at: i64, // Unix timestamp
     pub local_path: String,
-    pub remote_uri: String,
     pub etag: String,
     pub permissions: String,
     pub shared: bool,
@@ -38,17 +36,11 @@ pub struct MetadataEntry {
 }
 
 impl MetadataEntry {
-    pub fn new(
-        drive_id: Uuid,
-        local_path: impl Into<String>,
-        remote_uri: impl Into<String>,
-        is_folder: bool,
-    ) -> Self {
+    pub fn new(drive_id: Uuid, local_path: impl Into<String>, is_folder: bool) -> Self {
         Self {
             drive_id,
             is_folder,
             local_path: local_path.into(),
-            remote_uri: remote_uri.into(),
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
             etag: String::new(),
@@ -109,7 +101,6 @@ impl From<&FileMetadata> for MetadataEntry {
             created_at: file_metadata.created_at,
             updated_at: file_metadata.updated_at.clone(),
             local_path: file_metadata.local_path.clone(),
-            remote_uri: file_metadata.remote_uri.clone(),
             etag: file_metadata.etag.clone(),
             permissions: file_metadata.permissions.clone(),
             shared: file_metadata.shared,
@@ -126,7 +117,6 @@ pub struct TaskRecord {
     pub drive_id: String,
     pub task_type: String,
     pub local_path: String,
-    pub remote_uri: Option<String>,
     pub status: TaskStatus,
     pub progress: f64,
     pub total_bytes: i64,
@@ -144,7 +134,6 @@ pub struct NewTaskRecord {
     pub drive_id: String,
     pub task_type: String,
     pub local_path: String,
-    pub remote_uri: Option<String>,
     pub status: TaskStatus,
     pub progress: f64,
     pub total_bytes: i64,
@@ -169,7 +158,6 @@ impl NewTaskRecord {
             drive_id: drive_id.into(),
             task_type: task_type.into(),
             local_path: local_path.into(),
-            remote_uri: None,
             status: TaskStatus::Pending,
             progress: 0.0,
             total_bytes: 0,
@@ -180,11 +168,6 @@ impl NewTaskRecord {
             created_at: now,
             updated_at: now,
         }
-    }
-
-    pub fn with_remote_uri(mut self, remote_uri: impl Into<String>) -> Self {
-        self.remote_uri = Some(remote_uri.into());
-        self
     }
 
     pub fn with_priority(mut self, priority: i32) -> Self {

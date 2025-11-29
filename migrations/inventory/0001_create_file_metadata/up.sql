@@ -3,7 +3,6 @@ CREATE TABLE IF NOT EXISTS file_metadata (
     drive_id TEXT NOT NULL,
     is_folder BOOLEAN NOT NULL,
     local_path TEXT NOT NULL UNIQUE,
-    remote_uri TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     etag TEXT NOT NULL,

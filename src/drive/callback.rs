@@ -222,16 +222,13 @@ impl SyncFilter for CallbackHandler {
     fn renamed(&self, request: Request, info: info::Renamed) {
         let dest = request.path();
         tracing::debug!(target: "drive::mounts", id = %self.id, dest_path = %dest.display(), "Renamed");
-        // Mark as in-sync
-        match OpenOptions::new().write_access().exclusive().open(&dest) {
-            Ok(mut handle) => {
-                if let Err(e) = handle.mark_in_sync(true, None) {
-                    tracing::error!(target: "drive::mounts", id = %self.id, error = ?e, "Failed to mark as in-sync");
-                }
-            }
-            Err(e) => {
-                tracing::error!(target: "drive::mounts", id = %self.id, error = ?e, "Failed to mark as in-sync");
-            }
+        let command: MountCommand = MountCommand::Renamed {
+            source: info.source_path(),
+            destination: dest,
+        };
+        if let Err(e) = self.command_tx.send(command) {
+            tracing::error!(target: "drive::mounts", id = %self.id, error = %e, "Failed to send Renamed command");
+            return;
         }
     }
 }
