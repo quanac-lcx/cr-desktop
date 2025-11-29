@@ -219,8 +219,8 @@ impl SyncFilter for CallbackHandler {
         );
     }
 
-    fn renamed(&self, _request: Request, info: info::Renamed) {
-        let dest = info.source_path();
+    fn renamed(&self, request: Request, info: info::Renamed) {
+        let dest = request.path();
         tracing::debug!(target: "drive::mounts", id = %self.id, dest_path = %dest.display(), "Renamed");
         // Mark as in-sync
         match OpenOptions::new().write_access().exclusive().open(&dest) {

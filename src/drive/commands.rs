@@ -341,7 +341,7 @@ impl Mount {
                         .to_string(),
                 ],
                 dst: local_path_to_cr_uri(
-                    source_parent.to_path_buf(),
+                    target_parent.to_path_buf(),
                     sync_path.clone(),
                     remote_path.clone(),
                 )?
