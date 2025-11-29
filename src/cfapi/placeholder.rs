@@ -20,14 +20,7 @@ use windows::{
         },
         Storage::{
             CloudFilters::{
-                self, CF_CONVERT_FLAGS, CF_FILE_RANGE, CF_OPEN_FILE_FLAGS, CF_PIN_STATE,
-                CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO,
-                CF_PLACEHOLDER_STATE, CF_SET_PIN_FLAGS, CF_UPDATE_FLAGS, CfCloseHandle,
-                CfConvertToPlaceholder, CfGetPlaceholderInfo, CfGetPlaceholderRangeInfo,
-                CfGetPlaceholderStateFromFileInfo, CfGetPlaceholderStateFromFindData,
-                CfGetWin32HandleFromProtectedHandle, CfHydratePlaceholder, CfOpenFileWithOplock,
-                CfReferenceProtectedHandle, CfReleaseProtectedHandle, CfRevertPlaceholder,
-                CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder,
+                self, CF_CONVERT_FLAGS, CF_FILE_RANGE, CF_FS_METADATA, CF_OPEN_FILE_FLAGS, CF_PIN_STATE, CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO, CF_PLACEHOLDER_STATE, CF_SET_PIN_FLAGS, CF_UPDATE_FLAGS, CfCloseHandle, CfConvertToPlaceholder, CfGetPlaceholderInfo, CfGetPlaceholderRangeInfo, CfGetPlaceholderStateFromFileInfo, CfGetPlaceholderStateFromFindData, CfGetWin32HandleFromProtectedHandle, CfHydratePlaceholder, CfOpenFileWithOplock, CfReferenceProtectedHandle, CfReleaseProtectedHandle, CfRevertPlaceholder, CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder
             },
             FileSystem::{
                 FILE_ATTRIBUTE_DIRECTORY, FIND_FIRST_EX_FLAGS, FindClose, FindExInfoBasic,
@@ -934,7 +927,7 @@ impl Placeholder {
         unsafe {
             CfUpdatePlaceholder(
                 self.handle.handle,
-                options.metadata.map(|x| &x.0 as *const _),
+                options.metadata.as_ref().map(|x| &x.0 as *const CF_FS_METADATA),
                 (!options.blob.is_empty()).then_some(options.blob.as_ptr() as *const _),
                 options.blob.len() as _,
                 (options.dehydrate_ranges.is_empty()).then_some(&options.dehydrate_ranges),

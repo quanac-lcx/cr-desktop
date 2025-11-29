@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     cfapi::{
         metadata::{self, Metadata},
         placeholder::{ConvertOptions, LocalFileInfo, OpenOptions, Placeholder, UpdateOptions},
     },
-    drive::sync::cloud_file_to_metadata_entry,
+    drive::{sync::cloud_file_to_metadata_entry, utils::notify_shell_change},
     inventory::{FileMetadata, InventoryDb, MetadataEntry},
     tasks::{TaskQueue, queue::QueuedTask},
 };
@@ -19,6 +19,7 @@ use cloudreve_api::{
 use nt_time::FileTime;
 use tracing;
 use uuid::Uuid;
+use windows::Win32::UI::Shell::{SHCNE_CREATE, SHCNE_MKDIR};
 
 pub struct UploadTask<'a> {
     inventory: Arc<InventoryDb>,
@@ -147,12 +148,29 @@ impl<'a> UploadTask<'a> {
             .context("failed to upsert inventory")?;
 
         let mut local_handle = OpenOptions::new()
+            .write_access()
+            .exclusive()
             .open(&self.task.payload.local_path)
             .context("failed to open local file")?;
 
         // Convert to placeholder if it's not
         if !self.local_file.as_ref().unwrap().is_placeholder() {
-            local_handle.convert_to_placeholder(ConvertOptions::default().mark_in_sync(), None)?;
+            tracing::info!(
+                target: "tasks::upload",
+                task_id = %self.task.task_id,
+                local_path = %self.task.payload.local_path_display(),
+                "Converting to placeholder"
+            );
+            local_handle
+                .convert_to_placeholder(ConvertOptions::default().mark_in_sync(), None)
+                .context("failed to convert to placeholder")?;
+
+            drop(local_handle);
+            local_handle = OpenOptions::new()
+                .write_access()
+                .exclusive()
+                .open(&self.task.payload.local_path)
+                .context("failed to open local file")?;
         }
 
         // Sync placeholder info with cloud
@@ -160,24 +178,36 @@ impl<'a> UploadTask<'a> {
             FileTime::from_unix_time(file.created_at.parse::<DateTime<Utc>>()?.timestamp())?;
         let last_modified =
             FileTime::from_unix_time(file.updated_at.parse::<DateTime<Utc>>()?.timestamp())?;
-        let metadata = if file.file_type == file_type::FOLDER {
-            Metadata::directory()
-        } else {
-            Metadata::file()
-        };
+        let mut metadata = Metadata::default();
+        if file.file_type == file_type::FILE {
+            metadata = metadata.size(file.size as u64);
+        }
         local_handle
             .update(
-                UpdateOptions::default().mark_in_sync().metadata(
-                    metadata
-                        .changed(last_modified)
-                        .created(created_at)
-                        .written(last_modified)
-                        .size(file.size as u64),
-                ),
+                UpdateOptions::default()
+                    .mark_in_sync()
+                    .has_children()
+                    .metadata(
+                        metadata
+                            .created(created_at)
+                            .accessed(last_modified)
+                            .written(last_modified)
+                            .changed(last_modified),
+                    ),
                 None,
             )
             .context("failed to sync placeholder info with cloud")?;
 
+        // Notify shell change
+        notify_shell_change(
+            &self.task.payload.local_path,
+            if self.local_file.as_ref().unwrap().is_directory {
+                SHCNE_CREATE
+            } else {
+                SHCNE_MKDIR
+            },
+        )
+        .context("failed to notify shell change")?;
         Ok(())
     }
 }
