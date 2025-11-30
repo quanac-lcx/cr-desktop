@@ -7,7 +7,7 @@ use crate::{
     drive::{
         mounts::Mount,
         sync::{GroupedFsEvents, SyncMode},
-        utils::local_path_to_cr_uri,
+        utils::{local_path_to_cr_uri, notify_shell_change},
     },
     tasks::TaskPayload,
 };
@@ -36,7 +36,7 @@ use std::{
 };
 use tokio::sync::oneshot::Sender;
 use widestring::U16CString;
-use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW};
+use windows::Win32::{Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW}, UI::Shell::SHCNE_ATTRIBUTES};
 use windows_core::PCWSTR;
 const PAGE_SIZE: i32 = 1000;
 
@@ -140,6 +140,8 @@ impl Mount {
             .context("no download URL in response")?
             .url
             .clone();
+
+        tracing::debug!(target: "drive::commands", download_url = %download_url, "Download URL");
 
         // Calculate total bytes to fetch
         let total_bytes = range.end - range.start;
@@ -347,7 +349,7 @@ impl Mount {
                 // We have tasks canceled, we need to trigger sync on the moved file
                 self.command_tx
                     .send(MountCommand::Sync {
-                        local_paths: vec![source.clone()],
+                        local_paths: vec![destination.clone()],
                         mode: SyncMode::FullHierarchy,
                     })
                     .context("failed to send sync command")?;
@@ -402,12 +404,8 @@ impl Mount {
                         &EventKind::Modify(ModifyKind::Name(RenameMode::From)),
                         source.clone(),
                     );
-                    self.event_blocker.register_once(
-                        &EventKind::Modify(ModifyKind::Name(RenameMode::To)),
-                        target.clone(),
-                    );
 
-                    self.task_queue.cancel_by_path(source.clone()).await?;
+                    //self.task_queue.cancel_by_path(source.clone()).await?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -482,11 +480,60 @@ impl Mount {
                     self.process_fs_create_events(path_uri_mappings, sync_path, remote_base)
                         .await?
                 }
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+                    self.process_fs_modify_name_event(filtered_events).await?
+                }
                 EventKind::Modify(_) => {
                     self.process_fs_modify_events(path_uri_mappings, sync_path, remote_base)
                         .await?
                 }
                 _ => (),
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_fs_modify_name_event(&self, events: Vec<Event>) -> Result<()> {
+        tracing::trace!(target: "drive::commands", count=events.len(), "Processing filesystem modify name event");
+        for event in events {
+            if event.paths.len() != 2 {
+                tracing::error!(target: "drive::commands", count=event.paths.len(), "Invalid modify name event: not 2 paths");
+                continue;
+            }
+
+            let to_file_info = match LocalFileInfo::from_path(event.paths[1].as_path()) {
+                Ok(info) => info,
+                Err(e) => {
+                    tracing::error!(target: "drive::commands", path = %event.paths[1].display(), error = %e, "Failed to get local file info");
+                    continue;
+                }
+            };
+
+            if to_file_info.is_placeholder() {
+                tracing::debug!(target: "drive::commands", path = %event.paths[1].display(), "Skip for placeholder rename event");
+                continue;
+            }
+
+            // Cancel ongoing/pending tasks
+            let result = self.task_queue.cancel_by_path(event.paths[0].clone()).await;
+            match result {
+                Ok(0) => {
+                    tracing::debug!(target: "drive::commands", path = %event.paths[0].display(), "No ongoing/pending tasks");
+                }
+                Ok(count) => {
+                    // Trigger sync on the moved file
+                    self.command_tx
+                        .send(MountCommand::Sync {
+                            local_paths: vec![event.paths[1].clone()],
+                            mode: SyncMode::FullHierarchy,
+                        })
+                        .context("failed to send sync command")?;
+                    tracing::info!(target: "drive::commands", path = %event.paths[0].display(), count = count, "Cancelled tasks");
+                }
+                Err(e) => {
+                    tracing::error!(target: "drive::commands", path = %event.paths[0].display(), error = %e, "Failed to cancel tasks");
+                    continue;
+                }
             }
         }
         Ok(())
@@ -518,7 +565,8 @@ impl Mount {
             }
 
             // For pinned file but not on disk, hydrate it
-            if placeholder_info.pinned() == PinState::Pinned && placeholder_info.partial_on_disk() {
+            let pin_state = placeholder_info.pinned();
+            if pin_state == PinState::Pinned && placeholder_info.partial_on_disk() {
                 tracing::debug!(target: "drive::commands", path = %path.display(), "Hydrate pinned not on disk placeholder");
                 let mut placeholder = match OpenOptions::new().open_win32(path.as_path()) {
                     Ok(p) => p,
@@ -532,6 +580,23 @@ impl Mount {
                     continue;
                 }
                 tracing::trace!(target: "drive::commands", path = %path.display(), "Hydration complete");
+                _ = notify_shell_change(&path, SHCNE_ATTRIBUTES);
+                continue;
+            } else if pin_state == PinState::Unpinned {
+                tracing::debug!(target: "drive::commands", path = %path.display(), "Dehydrate unpinned file");
+                let mut placeholder = match OpenOptions::new().open_win32(path.as_path()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!(target: "drive::commands", path = %path.display(), error = %e, "Failed to open win32 file");
+                        continue;
+                    }
+                };
+                if let Err(e) = placeholder.dehydrate(0..) {
+                    tracing::error!(target: "drive::commands", path = %path.display(), error = %e, "Failed to dehydrate placeholder");
+                    continue;
+                }
+                tracing::trace!(target: "drive::commands", path = %path.display(), "Dehydration complete");
+                _ = notify_shell_change(&path, SHCNE_ATTRIBUTES);
                 continue;
             }
 
@@ -603,6 +668,20 @@ impl Mount {
 
         let uris: Vec<String> = path_uri_mappings.keys().cloned().collect();
 
+        // cancel related tasks
+        for path in path_uri_mappings.values() {
+            let result = self.task_queue.cancel_by_path(path.as_path()).await;
+            match result {
+                Ok(count) => {
+                    tracing::info!(target: "drive::commands", path = %path.display(), count = count, "Cancelled tasks");
+                }
+                Err(e) => {
+                    tracing::error!(target: "drive::commands", path = %path.display(), error = %e, "Failed to cancel tasks");
+                    continue;
+                }
+            }
+        }
+
         tracing::info!(
             target: "drive::commands",
             uri_count = uris.len(),
@@ -640,8 +719,8 @@ impl Mount {
             }
         };
 
-        // Update local inventory to reflect successful deletions
         if !successful_paths.is_empty() {
+            // Update local inventory to reflect successful deletions
             self.update_inventory_for_deletions(&successful_paths)
                 .context("Failed to update local inventory after deletions")?;
         }

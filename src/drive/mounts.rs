@@ -360,7 +360,7 @@ impl Mount {
                     spawn(async move {
                         let result = s_clone.fetch_data(path, ticket, range).await;
                         if let Err(e) = result {
-                            tracing::error!(target: "drive::mounts", id = %mount_id_clone, error = %e, "Failed to fetch data");
+                            tracing::error!(target: "drive::mounts", id = %mount_id_clone, error = ?e, "Failed to fetch data");
                             let _ = response.send(Err(e));
                             return;
                         }

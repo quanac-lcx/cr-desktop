@@ -20,14 +20,7 @@ use windows::{
         },
         Storage::{
             CloudFilters::{
-                self, CF_CONVERT_FLAGS, CF_FILE_RANGE, CF_FS_METADATA, CF_OPEN_FILE_FLAGS,
-                CF_PIN_STATE, CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO,
-                CF_PLACEHOLDER_STATE, CF_SET_PIN_FLAGS, CF_UPDATE_FLAGS, CfCloseHandle,
-                CfConvertToPlaceholder, CfGetPlaceholderInfo, CfGetPlaceholderRangeInfo,
-                CfGetPlaceholderStateFromFileInfo, CfGetPlaceholderStateFromFindData,
-                CfGetWin32HandleFromProtectedHandle, CfHydratePlaceholder, CfOpenFileWithOplock,
-                CfReferenceProtectedHandle, CfReleaseProtectedHandle, CfRevertPlaceholder,
-                CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder,
+                self, CF_CONVERT_FLAGS, CF_FILE_RANGE, CF_FS_METADATA, CF_OPEN_FILE_FLAGS, CF_PIN_STATE, CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO, CF_PLACEHOLDER_STATE, CF_SET_PIN_FLAGS, CF_UPDATE_FLAGS, CfCloseHandle, CfConvertToPlaceholder, CfDehydratePlaceholder, CfGetPlaceholderInfo, CfGetPlaceholderRangeInfo, CfGetPlaceholderStateFromFileInfo, CfGetPlaceholderStateFromFindData, CfGetWin32HandleFromProtectedHandle, CfHydratePlaceholder, CfOpenFileWithOplock, CfReferenceProtectedHandle, CfReleaseProtectedHandle, CfRevertPlaceholder, CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder
             },
             FileSystem::{
                 CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_PINNED,
@@ -1087,6 +1080,26 @@ impl Placeholder {
                     Bound::Unbounded => -1,
                 },
                 CloudFilters::CF_HYDRATE_FLAG_NONE,
+                None,
+            )
+        }
+    }
+
+    pub fn dehydrate(&mut self, range: impl RangeBounds<u64>) -> core::Result<()> {
+        unsafe {
+            CfDehydratePlaceholder(
+                self.handle.handle,
+                match range.start_bound() {
+                    Bound::Included(x) => (*x).try_into().unwrap(),
+                    Bound::Excluded(x) => (x + 1).try_into().unwrap(),
+                    Bound::Unbounded => 0,
+                },
+                match range.end_bound() {
+                    Bound::Included(x) => (*x).try_into().unwrap(),
+                    Bound::Excluded(x) => (x - 1).try_into().unwrap(),
+                    Bound::Unbounded => -1,
+                },
+                CloudFilters::CF_DEHYDRATE_FLAG_NONE,
                 None,
             )
         }

@@ -42,12 +42,7 @@ impl From<&EventKind> for NormalizedEventKind {
             EventKind::Access(_) => NormalizedEventKind::Access,
             EventKind::Create(_) => NormalizedEventKind::Create,
             EventKind::Modify(modify_kind) => match modify_kind {
-                ModifyKind::Name(rename_mode) => match rename_mode {
-                    RenameMode::To => NormalizedEventKind::ModifyNameTo,
-                    RenameMode::From => NormalizedEventKind::ModifyNameFrom,
-                    RenameMode::Both => NormalizedEventKind::ModifyNameBoth,
-                    RenameMode::Any | RenameMode::Other => NormalizedEventKind::ModifyNameAny,
-                },
+                ModifyKind::Name(_) => NormalizedEventKind::ModifyNameFrom,
                 _ => NormalizedEventKind::Modify,
             },
             EventKind::Remove(_) => NormalizedEventKind::Remove,

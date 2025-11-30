@@ -24,7 +24,7 @@ use cloudreve_api::{
     },
 };
 use notify_debouncer_full::notify::event::{
-    AccessKind, CreateKind, EventKind, ModifyKind, RemoveKind,
+    AccessKind, CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode,
 };
 use notify_debouncer_full::{DebouncedEvent, notify::Event};
 use nt_time::FileTime;
@@ -55,6 +55,8 @@ pub fn cloud_file_to_placeholder(
         FileTime::from_unix_time(file.created_at.parse::<DateTime<Utc>>()?.timestamp())?;
     let last_modified =
         FileTime::from_unix_time(file.updated_at.parse::<DateTime<Utc>>()?.timestamp())?;
+
+    tracing::trace!(target: "drive::sync::cloud_file_to_placeholder", relative_path = %relative_path.to_string_lossy(), "Relative path");
 
     Ok(PlaceholderFile::new(relative_path)
         .metadata(
@@ -166,7 +168,13 @@ fn normalize_event_kind(kind: &EventKind) -> EventKind {
         EventKind::Any => EventKind::Any,
         EventKind::Access(_) => EventKind::Access(AccessKind::Any),
         EventKind::Create(_) => EventKind::Create(CreateKind::Any),
-        EventKind::Modify(_) => EventKind::Modify(ModifyKind::Any),
+        EventKind::Modify(modify_kind) => match modify_kind {
+            ModifyKind::Name(rename_mode) => match rename_mode {
+                RenameMode::Both => EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                _ => EventKind::Modify(ModifyKind::Any),
+            },
+            _ => EventKind::Modify(ModifyKind::Any),
+        },
         EventKind::Remove(_) => EventKind::Remove(RemoveKind::Any),
         EventKind::Other => EventKind::Other,
     }
@@ -208,7 +216,6 @@ enum SyncAction {
     },
     DeleteLocalAndInventory {
         path: PathBuf,
-        is_directory: bool,
     },
     CreateRemoteFolder {
         path: PathBuf,
@@ -630,12 +637,11 @@ impl Mount {
                     aggregate_error.push(path.clone(), anyhow::Error::from(err));
                 }
             }
-            SyncAction::DeleteLocalAndInventory { path, is_directory } => {
+            SyncAction::DeleteLocalAndInventory { path } => {
                 tracing::info!(
                     target: "drive::sync",
                     id = %self.id,
                     path = %path.display(),
-                    is_directory = is_directory,
                     "Deleting local file/folder and inventory entry"
                 );
 
@@ -650,7 +656,8 @@ impl Mount {
                         "Failed to delete local file/folder and inventory entry"
                     );
                     aggregate_error.push(path.clone(), anyhow::Error::from(err));
-                }
+                };
+                self.event_blocker.register_once(&EventKind::Remove(RemoveKind::Any), path.clone());
             }
             SyncAction::CreateRemoteFolder { path } => {
                 tracing::info!(
@@ -682,6 +689,9 @@ impl Mount {
                     renamed = %renamed.display(),
                     "Renaming local file to resolve conflict"
                 );
+
+                // Cancel tasks for the original path
+                _ = self.task_queue.cancel_by_path(original.clone()).await;
 
                 if let Err(err) = std::fs::rename(original, renamed) {
                     tracing::error!(
@@ -925,11 +935,18 @@ impl Mount {
         let remote_is_dir = remote.file_type == file_type::FOLDER;
 
         if local.is_directory != remote_is_dir {
-            let conflict_path = generate_conflict_path(path);
-            plan.actions.push(SyncAction::RenameLocalWithConflict {
-                original: path.clone(),
-                renamed: conflict_path,
-            });
+            if local.is_placeholder() && local.partial_on_disk(){
+                plan.actions.push(SyncAction::DeleteLocalAndInventory {
+                    path: path.clone(),
+                });
+            }else{
+                let conflict_path = generate_conflict_path(path);
+                plan.actions.push(SyncAction::RenameLocalWithConflict {
+                    original: path.clone(),
+                    renamed: conflict_path,
+                });
+            }
+
             plan.actions
                 .push(SyncAction::CreatePlaceholderAndInventory {
                     path: path.clone(),
@@ -938,17 +955,35 @@ impl Mount {
             return;
         }
 
+        let remote_etag = remote.primary_entity.as_deref().unwrap_or("");
+        let etag_match = inventory
+            .map(|entry| entry.etag == remote_etag)
+            .unwrap_or(false);
+        let modify_date_match = inventory
+            .and_then(|entry| {
+                remote
+                    .updated_at
+                    .parse::<DateTime<Utc>>()
+                    .ok()
+                    .map(|updated_at| updated_at.timestamp() == entry.updated_at)
+            })
+            .unwrap_or(false);
+
         if remote_is_dir {
-            plan.actions.push(SyncAction::UpdateInventoryFromRemote {
-                path: path.clone(),
-                remote: remote.clone(),
-                invalidate_all: false,
-            });
+            if !etag_match || !modify_date_match {
+                plan.actions.push(SyncAction::UpdateInventoryFromRemote {
+                    path: path.clone(),
+                    remote: remote.clone(),
+                    invalidate_all: false,
+                });
+            }
             self.maybe_enqueue_walk_for_directory(path, mode, local, false, false, plan);
             return;
         }
 
-        self.plan_file_actions(path, remote, local, inventory, plan);
+        if !etag_match || !modify_date_match {
+            self.plan_file_actions(path, remote, local, inventory, plan);
+        }
     }
 
     fn plan_entry_with_local_only(
@@ -968,21 +1003,20 @@ impl Mount {
             if !hydrated {
                 plan.actions.push(SyncAction::DeleteLocalAndInventory {
                     path: path.clone(),
-                    is_directory: true,
                 });
                 return;
             }
 
+            
+            self.maybe_enqueue_walk_for_directory(path, mode, local, true, hydrated, plan);
             plan.actions
                 .push(SyncAction::CreateRemoteFolder { path: path.clone() });
-            self.maybe_enqueue_walk_for_directory(path, mode, local, true, hydrated, plan);
             return;
         }
 
         if local.is_placeholder() && local.in_sync() {
             plan.actions.push(SyncAction::DeleteLocalAndInventory {
                 path: path.clone(),
-                is_directory: false,
             });
             return;
         }
@@ -1002,23 +1036,6 @@ impl Mount {
         inventory: Option<&FileMetadata>,
         plan: &mut SyncPlan,
     ) {
-        let remote_etag = remote.primary_entity.as_deref().unwrap_or("");
-        let etag_match = inventory
-            .map(|entry| entry.etag == remote_etag)
-            .unwrap_or(false);
-        let modify_date_match = inventory
-            .and_then(|entry| {
-                local
-                    .last_modified
-                    .and_then(|lm| system_time_to_unix_secs(lm))
-                    .map(|local_secs| entry.updated_at == local_secs)
-            })
-            .unwrap_or(false);
-
-        if etag_match && modify_date_match {
-            return;
-        }
-
         if !local.is_placeholder() || !local.in_sync() {
             // TODO: if Search upload queue and found no tasks:
             plan.actions.push(SyncAction::QueueUpload {
@@ -1032,7 +1049,7 @@ impl Mount {
         plan.actions.push(SyncAction::UpdateInventoryFromRemote {
             path: path.clone(),
             remote: remote.clone(),
-            invalidate_all: pinned == PinState::Pinned,
+            invalidate_all: !local.partial_on_disk(),
         });
         if pinned == PinState::Pinned {
             plan.actions.push(SyncAction::QueueDownload {
@@ -1064,7 +1081,7 @@ impl Mount {
         if matches!(
             parent_mode,
             SyncMode::FullHierarchy | SyncMode::PathAndFirstLayer
-        ) && local.is_folder_populated()
+        ) && (local.is_folder_populated() || !local.is_placeholder())
         {
             let mode = next_child_mode(parent_mode);
             self.insert_walk_request(

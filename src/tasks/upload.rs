@@ -70,7 +70,7 @@ impl<'a> UploadTask<'a> {
             return Ok(());
         }
 
-        if local_file.in_sync() {
+        if local_file.in_sync() && !local_file.is_directory() {
             tracing::info!(
                 target: "tasks::upload",
                 task_id = %self.task.task_id,
@@ -95,9 +95,11 @@ impl<'a> UploadTask<'a> {
             .query_by_path(path_str)
             .context("failed to get inventory meta")?;
 
+            // TODO: If not found in inventory, create empty file/folder
         if is_directory || self.local_file.as_ref().unwrap().file_size.unwrap_or(0) == 0_u64 {
             self.create_empty_file_or_folder().await?;
         } else {
+            // TODO: Use etag
             // sleep 100s
             tokio::time::sleep(Duration::from_secs(100)).await;
         }

@@ -104,6 +104,8 @@ impl CrPlaceholder {
                     .context("failed to convert to placeholder")?;
             }
 
+            // TODO: Update metadata
+            
             if self.options & CrPlaceholderOptions::InvalidateAllRange as u32 != 0 {
                 tracing::debug!(target: "drive::placeholder", local_path = %self.local_path.display(), "Invalidating all range");
                 let mut local_handle = OpenOptions::new()
@@ -115,15 +117,15 @@ impl CrPlaceholder {
                     .update(UpdateOptions::default().dehydrate(), None)
                     .context("failed to invalidate all range")?;
             }
-            return Ok(());
         } else {
             // Create placeholder file/directory
             let relative_path = self
                 .local_path
                 .strip_prefix(&self.sync_root)
                 .context("failed to get relative path")?;
+            tracing::trace!(target: "drive::placeholder", relative_path = %relative_path.to_string_lossy(), "Relative path");
             let primary_entity = OsString::from(file_meta.etag.clone());
-            let placeholder = PlaceholderFile::new(relative_path)
+            let placeholder = PlaceholderFile::new(self.local_path.file_name().context("failed to get file name")?)
                 .metadata(
                     match file_meta.is_folder {
                         true => Metadata::directory(),

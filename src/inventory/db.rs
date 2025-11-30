@@ -113,7 +113,7 @@ impl InventoryDb {
     /// Update an existing file metadata entry by local path
     pub fn update(&self, entry: &MetadataEntry) -> Result<bool> {
         let mut conn = self.connection()?;
-        let changeset = FileMetadataChangeset::from_entry(entry, Utc::now().timestamp())?;
+        let changeset = FileMetadataChangeset::from_entry(entry)?;
         let rows_affected = diesel::update(
             file_metadata_dsl::file_metadata
                 .filter(file_metadata_dsl::local_path.eq(&entry.local_path)),
@@ -127,11 +127,8 @@ impl InventoryDb {
     /// Insert or update a file metadata entry (upsert based on local_path)
     pub fn upsert(&self, entry: &MetadataEntry) -> Result<usize> {
         let mut conn = self.connection()?;
-        let now = Utc::now().timestamp();
         let mut insert_data = NewFileMetadata::try_from(entry)?;
-        insert_data.created_at = now;
-        insert_data.updated_at = now;
-        let update_data = FileMetadataChangeset::from_entry(entry, now)?;
+        let update_data = FileMetadataChangeset::from_entry(entry)?;
 
         diesel::insert_into(file_metadata::table)
             .values(&insert_data)
@@ -358,7 +355,6 @@ impl InventoryDb {
         }
 
         let mut conn = self.connection()?;
-        let now = Utc::now().timestamp();
         let old_prefix = format!("{}{}", old_path, std::path::MAIN_SEPARATOR);
         let new_prefix = format!("{}{}", new_path, std::path::MAIN_SEPARATOR);
         let descendant_like = format!("{}%", old_prefix);
@@ -371,18 +367,16 @@ impl InventoryDb {
                 )
                 .set((
                     file_metadata_dsl::local_path.eq(new_path),
-                    file_metadata_dsl::updated_at.eq(now),
                 ))
                 .execute(tx_conn)?;
 
                 let descendants = diesel::sql_query(
                     "UPDATE file_metadata \
-                     SET local_path = ? || substr(local_path, length(?) + 1), updated_at = ? \
+                     SET local_path = ? || substr(local_path, length(?) + 1) \
                      WHERE local_path LIKE ?",
                 )
                 .bind::<Text, _>(&new_prefix)
                 .bind::<Text, _>(&old_prefix)
-                .bind::<BigInt, _>(now)
                 .bind::<Text, _>(&descendant_like)
                 .execute(tx_conn)?;
 
@@ -639,11 +633,11 @@ impl TryFrom<&MetadataEntry> for NewFileMetadata {
 }
 
 impl FileMetadataChangeset {
-    fn from_entry(entry: &MetadataEntry, updated_at_ts: i64) -> Result<Self> {
+    fn from_entry(entry: &MetadataEntry) -> Result<Self> {
         Ok(Self {
             drive_id: entry.drive_id.to_string(),
             is_folder: entry.is_folder,
-            updated_at: updated_at_ts,
+            updated_at: entry.updated_at,
             etag: entry.etag.clone(),
             metadata: serde_json::to_string(&entry.metadata)
                 .context("Failed to serialize metadata map")?,

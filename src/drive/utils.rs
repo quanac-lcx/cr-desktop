@@ -47,6 +47,9 @@ pub fn remote_path_to_local_relative_path(
         .strip_prefix(&remote_base_str)
         .context("Path is not under remote base")?;
 
+    // 3. make sure OS slash is used
+    let relative_path = relative_path.replace("/", std::path::MAIN_SEPARATOR_STR);
+
     Ok(PathBuf::from(relative_path))
 }
 
