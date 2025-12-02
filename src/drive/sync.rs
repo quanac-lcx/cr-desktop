@@ -19,7 +19,7 @@ use cloudreve_api::{
     api::explorer::ExplorerApiExt,
     error::ErrorCode,
     models::{
-        explorer::{FileResponse, file_type, metadata},
+        explorer::{FileResponse, StoragePolicy, file_type, metadata},
         uri::CrUri,
     },
 };
@@ -657,7 +657,8 @@ impl Mount {
                     );
                     aggregate_error.push(path.clone(), anyhow::Error::from(err));
                 };
-                self.event_blocker.register_once(&EventKind::Remove(RemoveKind::Any), path.clone());
+                self.event_blocker
+                    .register_once(&EventKind::Remove(RemoveKind::Any), path.clone());
             }
             SyncAction::CreateRemoteFolder { path } => {
                 tracing::info!(
@@ -935,11 +936,10 @@ impl Mount {
         let remote_is_dir = remote.file_type == file_type::FOLDER;
 
         if local.is_directory != remote_is_dir {
-            if local.is_placeholder() && local.partial_on_disk(){
-                plan.actions.push(SyncAction::DeleteLocalAndInventory {
-                    path: path.clone(),
-                });
-            }else{
+            if local.is_placeholder() && local.partial_on_disk() {
+                plan.actions
+                    .push(SyncAction::DeleteLocalAndInventory { path: path.clone() });
+            } else {
                 let conflict_path = generate_conflict_path(path);
                 plan.actions.push(SyncAction::RenameLocalWithConflict {
                     original: path.clone(),
@@ -1001,13 +1001,11 @@ impl Mount {
         if local.is_directory {
             let hydrated = local.is_folder_populated();
             if !hydrated {
-                plan.actions.push(SyncAction::DeleteLocalAndInventory {
-                    path: path.clone(),
-                });
+                plan.actions
+                    .push(SyncAction::DeleteLocalAndInventory { path: path.clone() });
                 return;
             }
 
-            
             self.maybe_enqueue_walk_for_directory(path, mode, local, true, hydrated, plan);
             plan.actions
                 .push(SyncAction::CreateRemoteFolder { path: path.clone() });
@@ -1015,9 +1013,8 @@ impl Mount {
         }
 
         if local.is_placeholder() && local.in_sync() {
-            plan.actions.push(SyncAction::DeleteLocalAndInventory {
-                path: path.clone(),
-            });
+            plan.actions
+                .push(SyncAction::DeleteLocalAndInventory { path: path.clone() });
             return;
         }
 
@@ -1253,6 +1250,7 @@ impl Mount {
         };
 
         let mut previous_response = None;
+        let mut parent_storage_policy: Option<StoragePolicy> = None;
         let mut children = Vec::new();
 
         loop {
@@ -1282,6 +1280,7 @@ impl Mount {
                 }
             };
 
+            parent_storage_policy = response.res.storage_policy.clone();
             for file in &response.res.files {
                 if is_symbolic_link(file) {
                     continue;
@@ -1318,6 +1317,16 @@ impl Mount {
             }
 
             previous_response = Some(response);
+        }
+
+        if let Some(storage_policy) = parent_storage_policy {
+            self.inventory
+                .upsert_storage_policy(
+                    &self.id.to_string(),
+                    &directory.display().to_string(),
+                    &storage_policy,
+                )
+                .context("failed to upsert parent folder storage policy")?;
         }
 
         Ok(children)

@@ -13,6 +13,7 @@ diesel::table! {
         permissions -> Text,
         shared -> Bool,
         size -> BigInt,
+        storage_policy -> Nullable<Text>,
     }
 }
 

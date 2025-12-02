@@ -1,3 +1,4 @@
+use cloudreve_api::models::explorer::StoragePolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -17,6 +18,7 @@ pub struct FileMetadata {
     pub permissions: String,
     pub shared: bool,
     pub size: i64,
+    pub storage_policy: Option<StoragePolicy>,
 }
 
 /// Entry for inserting or updating file metadata
@@ -263,4 +265,3 @@ impl TaskUpdate {
             && self.error.is_none()
     }
 }
-
