@@ -216,8 +216,9 @@ enum SyncAction {
     },
     DeleteLocalAndInventory {
         path: PathBuf,
+        skip_if_not_empty: bool,
     },
-    CreateRemoteFolder {
+    CreateRemoteFolderIfExist {
         path: PathBuf,
     },
     RenameLocalWithConflict {
@@ -637,7 +638,25 @@ impl Mount {
                     aggregate_error.push(path.clone(), anyhow::Error::from(err));
                 }
             }
-            SyncAction::DeleteLocalAndInventory { path } => {
+            SyncAction::DeleteLocalAndInventory {
+                path,
+                skip_if_not_empty,
+            } => {
+                if *skip_if_not_empty {
+                    // Check if folder is empty
+                    if let Ok(entries) = std::fs::read_dir(path) {
+                        if entries.count() == 0 {
+                            tracing::info!(
+                                target: "drive::sync",
+                                id = %self.id,
+                                path = %path.display(),
+                                "Folder is empty, skipping deletion"
+                            );
+                            return;
+                        }
+                    }
+                }
+
                 tracing::info!(
                     target: "drive::sync",
                     id = %self.id,
@@ -657,9 +676,13 @@ impl Mount {
                     );
                     aggregate_error.push(path.clone(), anyhow::Error::from(err));
                 };
-                self.event_blocker.register_once(&EventKind::Remove(RemoveKind::Any), path.clone());
+                self.event_blocker
+                    .register_once(&EventKind::Remove(RemoveKind::Any), path.clone());
             }
-            SyncAction::CreateRemoteFolder { path } => {
+            SyncAction::CreateRemoteFolderIfExist { path } => {
+                if !path.exists() {
+                    return;
+                }
                 tracing::info!(
                     target: "drive::sync",
                     id = %self.id,
@@ -935,11 +958,12 @@ impl Mount {
         let remote_is_dir = remote.file_type == file_type::FOLDER;
 
         if local.is_directory != remote_is_dir {
-            if local.is_placeholder() && local.partial_on_disk(){
+            if local.is_placeholder() && local.partial_on_disk() {
                 plan.actions.push(SyncAction::DeleteLocalAndInventory {
                     path: path.clone(),
+                    skip_if_not_empty: false,
                 });
-            }else{
+            } else {
                 let conflict_path = generate_conflict_path(path);
                 plan.actions.push(SyncAction::RenameLocalWithConflict {
                     original: path.clone(),
@@ -1003,20 +1027,25 @@ impl Mount {
             if !hydrated {
                 plan.actions.push(SyncAction::DeleteLocalAndInventory {
                     path: path.clone(),
+                    skip_if_not_empty: false,
                 });
                 return;
             }
 
-            
             self.maybe_enqueue_walk_for_directory(path, mode, local, true, hydrated, plan);
+            plan.actions.push(SyncAction::DeleteLocalAndInventory {
+                path: path.clone(),
+                skip_if_not_empty: true,
+            });
             plan.actions
-                .push(SyncAction::CreateRemoteFolder { path: path.clone() });
+                .push(SyncAction::CreateRemoteFolderIfExist { path: path.clone() });
             return;
         }
 
         if local.is_placeholder() && local.in_sync() {
             plan.actions.push(SyncAction::DeleteLocalAndInventory {
                 path: path.clone(),
+                skip_if_not_empty: false,
             });
             return;
         }

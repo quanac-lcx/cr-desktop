@@ -36,7 +36,10 @@ use std::{
 };
 use tokio::sync::oneshot::Sender;
 use widestring::U16CString;
-use windows::Win32::{Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW}, UI::Shell::SHCNE_ATTRIBUTES};
+use windows::Win32::{
+    Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW},
+    UI::Shell::SHCNE_ATTRIBUTES,
+};
 use windows_core::PCWSTR;
 const PAGE_SIZE: i32 = 1000;
 
@@ -125,8 +128,18 @@ impl Mount {
         let uri = local_path_to_cr_uri(path.clone(), sync_path, remote_base)
             .context("failed to convert local path to cloudreve uri")?;
 
+        let file_meta = self
+            .inventory
+            .query_by_path(path.to_str().unwrap_or(""))
+            .context("failed to query metadata by path")?;
+
         let mut request: FileURLService = FileURLService::default();
         request.uris.push(uri.to_string());
+        if let Some(meta) = file_meta {
+            if !meta.etag.is_empty() {
+                request.entity = Some(meta.etag.clone());
+            }
+        }
         let entity_url_res = self
             .cr_client
             .get_file_url(&request)
@@ -275,10 +288,11 @@ impl Mount {
             .context("failed to query metadata by path")?
             .ok_or_else(|| anyhow::anyhow!("no metadata found for path: {:?}", path))?;
 
-        if file_meta.is_folder || file_meta
-            .metadata
-            .get(metadata::THUMBNAIL_DISABLED)
-            .is_some()
+        if file_meta.is_folder
+            || file_meta
+                .metadata
+                .get(metadata::THUMBNAIL_DISABLED)
+                .is_some()
         {
             return Err(anyhow::anyhow!("thumbnail disabled for path: {:?}", path));
         }
