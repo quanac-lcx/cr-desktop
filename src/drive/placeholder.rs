@@ -19,6 +19,8 @@ use windows::Win32::UI::Shell::{
 };
 
 pub struct CrPlaceholder {
+    pub local_file_info: LocalFileInfo,
+
     local_path: PathBuf,
     sync_root: PathBuf,
     drive_id: Uuid,
@@ -28,16 +30,20 @@ pub struct CrPlaceholder {
 
 enum CrPlaceholderOptions {
     InvalidateAllRange = 1 << 0,
+    MarkNoChildren = 1 << 1,
 }
 
 impl CrPlaceholder {
-    pub fn new(local_path: PathBuf, sync_root: PathBuf, drive_id: Uuid) -> Self {
+    pub fn new(local_path: impl Into<PathBuf>, sync_root: PathBuf, drive_id: Uuid) -> Self {
+        let local_path = local_path.into();
         Self {
-            local_path,
+            local_path: local_path.clone(),
             sync_root,
             drive_id,
             file_meta: None,
             options: 0,
+            local_file_info: LocalFileInfo::from_path(&local_path.clone())
+                .unwrap_or(LocalFileInfo::missing()),
         }
     }
 
@@ -50,9 +56,18 @@ impl CrPlaceholder {
         self
     }
 
+    pub fn with_mark_no_children(mut self, enable: bool) -> Self {
+        if enable {
+            self.options |= CrPlaceholderOptions::MarkNoChildren as u32;
+        } else {
+            self.options &= !(CrPlaceholderOptions::MarkNoChildren as u32);
+        }
+        self
+    }
+
     pub fn delete_placeholder(&self, inventory: Arc<InventoryDb>) -> Result<()> {
         // Delete local file/folder if it exists
-        if self.local_path.exists() {
+        if self.local_file_info.exists {
             if self.local_path.is_dir() {
                 std::fs::remove_dir_all(&self.local_path)
                     .context("failed to delete local directory")?;
@@ -85,9 +100,8 @@ impl CrPlaceholder {
 
         let file_meta = self.file_meta.as_ref().unwrap();
 
-        if self.local_path.exists() {
-            let local_file_info = LocalFileInfo::from_path(&self.local_path)?;
-            if !local_file_info.is_placeholder() {
+        if self.local_file_info.exists {
+            if !self.local_file_info.is_placeholder() {
                 // Upgrade to placeholder
                 let mut local_handle = OpenOptions::new()
                     .write_access()
@@ -116,6 +130,10 @@ impl CrPlaceholder {
             if self.options & CrPlaceholderOptions::InvalidateAllRange as u32 != 0 {
                 tracing::debug!(target: "drive::placeholder", local_path = %self.local_path.display(), "Invalidating all range");
                 upload_options = upload_options.dehydrate();
+            }
+            if self.options & CrPlaceholderOptions::MarkNoChildren as u32 != 0 {
+                tracing::debug!(target: "drive::placeholder", local_path = %self.local_path.display(), "Marking no children");
+                upload_options = upload_options.has_no_children();
             }
             let mut local_handle = OpenOptions::new()
                 .write_access()
