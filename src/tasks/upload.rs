@@ -1,5 +1,6 @@
 use std::{
     path::PathBuf,
+    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -10,6 +11,7 @@ use crate::{
         placeholder::{ConvertOptions, LocalFileInfo, OpenOptions, Placeholder, UpdateOptions},
     },
     drive::{
+        placeholder::CrPlaceholder,
         sync::cloud_file_to_metadata_entry,
         utils::{local_path_to_cr_uri, notify_shell_change},
     },
@@ -17,12 +19,13 @@ use crate::{
     tasks::{TaskQueue, queue::QueuedTask},
     uploader::{ProgressCallback, ProgressUpdate, UploadParams, Uploader, UploaderConfig},
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Error, Result};
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cloudreve_api::{
     Client,
     api::ExplorerApi,
-    models::explorer::{CreateFileService, FileResponse, file_type},
+    models::explorer::{CreateFileService, FileResponse, FileUpdateService, file_type},
 };
 use nt_time::FileTime;
 use tokio_util::sync::CancellationToken;
@@ -70,7 +73,7 @@ pub struct UploadTask<'a> {
     sync_path: PathBuf,
     remote_base: String,
     task: &'a QueuedTask,
-    local_file: Option<LocalFileInfo>,
+    local_file: Option<CrPlaceholder>,
     inventory_meta: Option<FileMetadata>,
     cancel_token: CancellationToken,
 }
@@ -106,9 +109,12 @@ impl<'a> UploadTask<'a> {
     // Upload a local file/folder to cloud
     pub async fn execute(&mut self) -> Result<()> {
         // Get local file info
-        let local_file = LocalFileInfo::from_path(&self.task.payload.local_path)
-            .context("failed to get local file info")?;
-        if !local_file.exists {
+        let placeholder_file = CrPlaceholder::new(
+            &self.task.payload.local_path,
+            self.sync_path.clone(),
+            Uuid::from_str(self.drive_id)?,
+        );
+        if !placeholder_file.local_file_info.exists {
             info!(
                 target: "tasks::upload",
                 task_id = %self.task.task_id,
@@ -118,7 +124,9 @@ impl<'a> UploadTask<'a> {
             return Ok(());
         }
 
-        if local_file.in_sync() && !local_file.is_directory() {
+        if placeholder_file.local_file_info.in_sync()
+            && !placeholder_file.local_file_info.is_directory()
+        {
             info!(
                 target: "tasks::upload",
                 task_id = %self.task.task_id,
@@ -128,9 +136,9 @@ impl<'a> UploadTask<'a> {
             return Ok(());
         }
 
-        let is_directory = local_file.is_directory;
-        let file_size = local_file.file_size.unwrap_or(0);
-        self.local_file = Some(local_file);
+        let is_directory = placeholder_file.local_file_info.is_directory;
+        let file_size = placeholder_file.local_file_info.file_size.unwrap_or(0);
+        self.local_file = Some(placeholder_file);
 
         // Get inventory meta
         let path_str = self
@@ -145,20 +153,60 @@ impl<'a> UploadTask<'a> {
             .context("failed to get inventory meta")?;
 
         // Handle empty files and directories separately
-        if is_directory || file_size == 0 {
-            self.create_empty_file_or_folder().await?;
-        } else {
-            // Use the new uploader for regular files
-            self.upload_file_with_uploader().await?;
-        }
+        let upload_res = match (is_directory, file_size == 0, self.inventory_meta.is_none()) {
+            (true, _, _) => self.create_empty_file_or_folder().await,
+            (false, true, true) => self.create_empty_file_or_folder().await,
+            (false, true, false) => self.clear_file_content().await,
+            (false, false, _) => self.upload_file_with_uploader().await,
+        };
 
-        Ok(())
+        self.handle_error(upload_res).await
+    }
+
+    async fn handle_error(&mut self, r: Result<()>) -> Result<()> {
+        match r {
+            Ok(()) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn clear_file_content(&mut self) -> Result<()> {
+        info!(
+            target: "tasks::upload",
+            task_id = %self.task.task_id,
+            local_path = %self.task.payload.local_path_display(),
+            "Clearing file content with update request"
+        );
+
+        let uri = local_path_to_cr_uri(
+            self.task.payload.local_path.clone(),
+            self.sync_path.clone(),
+            self.remote_base.clone(),
+        )
+        .context("failed to convert local path to cloudreve uri")?
+        .to_string();
+        let etag = self.inventory_meta.as_ref().unwrap().etag.clone();
+        let res = self
+            .cr_client
+            .update_file(
+                &FileUpdateService {
+                    uri,
+                    previous: Some(etag),
+                },
+                Bytes::new(),
+            )
+            .await;
+
+        match res {
+            Ok(file) => self.file_uploaded(&file),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Upload a file using the new uploader module
     async fn upload_file_with_uploader(&mut self) -> Result<()> {
         let local_file = self.local_file.as_ref().unwrap();
-        let file_size = local_file.file_size.unwrap_or(0);
+        let file_size = local_file.local_file_info.file_size.unwrap_or(0);
 
         info!(
             target: "tasks::upload",
@@ -189,6 +237,7 @@ impl<'a> UploadTask<'a> {
             file_size,
             mime_type: None, // Could be detected from file extension
             last_modified: local_file
+                .local_file_info
                 .last_modified
                 .map(|t| t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64),
             overwrite: false, // TODO: Get from task config
@@ -276,7 +325,7 @@ impl<'a> UploadTask<'a> {
             local_path = %self.task.payload.local_path_display(),
             "Creating empty file/folder"
         );
-        let local_file = self.local_file.as_ref().unwrap();
+        let local_file = &self.local_file.as_ref().unwrap().local_file_info;
         let uri = local_path_to_cr_uri(
             self.task.payload.local_path.clone(),
             self.sync_path.clone(),
@@ -305,7 +354,7 @@ impl<'a> UploadTask<'a> {
         }
     }
 
-    fn file_uploaded(&self, file: &FileResponse) -> Result<()> {
+    fn file_uploaded(&mut self, file: &FileResponse) -> Result<()> {
         info!(
             target: "tasks::upload",
             task_id = %self.task.task_id,
@@ -313,79 +362,18 @@ impl<'a> UploadTask<'a> {
             "File uploaded"
         );
 
-        // Upsert inventory
-        self.inventory
-            .upsert(
-                &cloud_file_to_metadata_entry(
-                    file,
-                    &Uuid::parse_str(self.drive_id).context("failed to parse drive id")?,
-                    &self.task.payload.local_path,
-                )
-                .context("failed to convert cloud file to metadata entry")?,
-            )
-            .context("failed to upsert inventory")?;
+        self.local_file = Some(
+            self.local_file
+                .take()
+                .unwrap()
+                .with_mark_no_children(true)
+                .with_remote_file(file),
+        );
 
-        let mut local_handle = OpenOptions::new()
-            .write_access()
-            .exclusive()
-            .open(&self.task.payload.local_path)
-            .context("failed to open local file")?;
-
-        // Convert to placeholder if it's not
-        if !self.local_file.as_ref().unwrap().is_placeholder() {
-            info!(
-                target: "tasks::upload",
-                task_id = %self.task.task_id,
-                local_path = %self.task.payload.local_path_display(),
-                "Converting to placeholder"
-            );
-            local_handle
-                .convert_to_placeholder(ConvertOptions::default().mark_in_sync(), None)
-                .context("failed to convert to placeholder")?;
-
-            drop(local_handle);
-            local_handle = OpenOptions::new()
-                .write_access()
-                .exclusive()
-                .open(&self.task.payload.local_path)
-                .context("failed to open local file")?;
-        }
-
-        // Sync placeholder info with cloud
-        let created_at =
-            FileTime::from_unix_time(file.created_at.parse::<DateTime<Utc>>()?.timestamp())?;
-        let last_modified =
-            FileTime::from_unix_time(file.updated_at.parse::<DateTime<Utc>>()?.timestamp())?;
-        let mut metadata = Metadata::default();
-        if file.file_type == file_type::FILE {
-            metadata = metadata.size(file.size as u64);
-        }
-        local_handle
-            .update(
-                UpdateOptions::default()
-                    .mark_in_sync()
-                    .has_children()
-                    .metadata(
-                        metadata
-                            .created(created_at)
-                            .accessed(last_modified)
-                            .written(last_modified)
-                            .changed(last_modified),
-                    ),
-                None,
-            )
-            .context("failed to sync placeholder info with cloud")?;
-
-        // Notify shell change
-        notify_shell_change(
-            &self.task.payload.local_path,
-            if self.local_file.as_ref().unwrap().is_directory {
-                SHCNE_MKDIR
-            } else {
-                SHCNE_CREATE
-            },
-        )
-        .context("failed to notify shell change")?;
+        self.local_file
+            .as_mut()
+            .unwrap()
+            .commit(self.inventory.clone())?;
         Ok(())
     }
 }

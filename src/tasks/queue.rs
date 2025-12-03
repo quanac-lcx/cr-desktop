@@ -688,7 +688,7 @@ impl TaskQueue {
     }
 }
 
-enum TaskRunState {
+pub enum TaskRunState {
     Completed,
     Cancelled,
 }
