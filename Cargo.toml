@@ -74,6 +74,7 @@ features = [
     "Graphics_Imaging",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
+    "Win32_Storage_EnhancedStorage",
 ]
 
 [build-dependencies]

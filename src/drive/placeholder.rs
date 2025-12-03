@@ -22,6 +22,7 @@ use windows::{
     Win32::{
         Foundation::E_FAIL,
         System::Variant::VT_UI4,
+        Storage::EnhancedStorage::PKEY_LastSyncError,
         UI::Shell::{
             IShellItem2,
             PropertiesSystem::{
@@ -298,7 +299,7 @@ impl CrPlaceholder {
 
             // Set the PKEY_LastSyncError property
             property_store
-                .SetValue(&PKEY_LAST_SYNC_ERROR, &prop_var)
+                .SetValue(&PKEY_LastSyncError, &prop_var)
                 .context("failed to set PKEY_LastSyncError value")?;
 
             // Commit the changes
@@ -317,10 +318,3 @@ impl CrPlaceholder {
         Ok(())
     }
 }
-
-/// PKEY_LastSyncError property key for sync status
-/// GUID: {FCEFF153-E839-4CF3-A9E7-EA22832094B8}, PID: 7
-const PKEY_LAST_SYNC_ERROR: PROPERTYKEY = PROPERTYKEY {
-    fmtid: windows::core::GUID::from_u128(0xFCEFF153_E839_4CF3_A9E7_EA22832094B8),
-    pid: 7,
-};
