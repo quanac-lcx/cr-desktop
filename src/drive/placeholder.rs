@@ -11,12 +11,29 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use cloudreve_api::models::explorer::{FileResponse, file_type};
 use nt_time::FileTime;
-use std::{ffi::OsString, path::PathBuf, sync::Arc};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use uuid::Uuid;
 use widestring::U16CString;
-use windows::Win32::UI::Shell::{
-    SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR, SHCNF_PATHW, SHChangeNotify,
+use windows::{
+    Win32::{
+        Foundation::E_FAIL,
+        System::Variant::VT_UI4,
+        UI::Shell::{
+            IShellItem2,
+            PropertiesSystem::{
+                GPS_EXTRINSICPROPERTIESONLY, GPS_READWRITE, IPropertyStore, PROPERTYKEY,
+            },
+            SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR, SHCNF_PATHW, SHChangeNotify,
+            SHCreateItemFromParsingName,
+        },
+    },
+    core::PCWSTR,
 };
+use windows_core::PROPVARIANT;
 
 pub struct CrPlaceholder {
     pub local_file_info: LocalFileInfo,
@@ -225,4 +242,85 @@ impl CrPlaceholder {
         });
         self
     }
+
+    /// Updates the sync error state for a file or folder in Windows Explorer.
+    ///
+    /// This function sets or clears the `PKEY_LastSyncError` shell property,
+    /// which controls the sync error overlay icon displayed in Explorer.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to the file or folder
+    /// * `set_error` - If true, sets the error state (shows error overlay);
+    ///                 if false, clears the error state
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::path::Path;
+    ///
+    /// // Set error state on a file
+    /// update_sync_error_state(Path::new("C:\\MyFolder\\file.txt"), true)?;
+    ///
+    /// // Clear error state
+    /// update_sync_error_state(Path::new("C:\\MyFolder\\file.txt"), false)?;
+    /// ```
+    pub fn update_sync_error_state(&self, set_error: bool) -> Result<()> {
+        if !self.local_file_info.is_placeholder() {
+            // Skip non-placeholder file
+            return Ok(());
+        }
+        let path_wide = U16CString::from_os_str(&self.local_path)
+            .context("failed to convert path to wide string")?;
+
+        unsafe {
+            // Create a Shell Item from the file path
+            let item: IShellItem2 = SHCreateItemFromParsingName(PCWSTR(path_wide.as_ptr()), None)
+                .context("failed to create shell item from path")?;
+
+            // Get the Property Store with read/write access for extrinsic properties
+            let flags = GPS_READWRITE | GPS_EXTRINSICPROPERTIESONLY;
+            let property_store: IPropertyStore = item
+                .GetPropertyStore(flags)
+                .context("failed to get property store")?;
+
+            // Prepare the PROPVARIANT to set or clear the error state
+            let prop_var = if set_error {
+                // Set error state: VT_UI4 with E_FAIL value
+                let mut pv = PROPVARIANT::default().as_raw().clone();
+                pv.Anonymous.Anonymous.vt = VT_UI4.0;
+                pv.Anonymous.Anonymous.Anonymous.ulVal = E_FAIL.0 as u32;
+                PROPVARIANT::from_raw(pv)
+            } else {
+                let mut pv = PROPVARIANT::default().as_raw().clone();
+                PROPVARIANT::from_raw(pv)
+            };
+
+            // Set the PKEY_LastSyncError property
+            property_store
+                .SetValue(&PKEY_LAST_SYNC_ERROR, &prop_var)
+                .context("failed to set PKEY_LastSyncError value")?;
+
+            // Commit the changes
+            property_store
+                .Commit()
+                .context("failed to commit property store changes")?;
+        }
+
+        tracing::debug!(
+            target: "drive::placeholder",
+            path = %self.local_path.display(),
+            set_error,
+            "Updated sync error state"
+        );
+
+        Ok(())
+    }
 }
+
+/// PKEY_LastSyncError property key for sync status
+/// GUID: {FCEFF153-E839-4CF3-A9E7-EA22832094B8}, PID: 7
+const PKEY_LAST_SYNC_ERROR: PROPERTYKEY = PROPERTYKEY {
+    fmtid: windows::core::GUID::from_u128(0xFCEFF153_E839_4CF3_A9E7_EA22832094B8),
+    pid: 7,
+};

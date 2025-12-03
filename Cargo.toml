@@ -73,6 +73,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Graphics_Imaging",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
 ]
 
 [build-dependencies]

@@ -23,8 +23,9 @@ use anyhow::{Context, Error, Result};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cloudreve_api::{
-    Client,
+    ApiError, Client,
     api::ExplorerApi,
+    error::ErrorCode,
     models::explorer::{CreateFileService, FileResponse, FileUpdateService, file_type},
 };
 use nt_time::FileTime;
@@ -152,6 +153,17 @@ impl<'a> UploadTask<'a> {
             .query_by_path(path_str)
             .context("failed to get inventory meta")?;
 
+        // clear file error state
+        // Mark file as error state
+        if let Err(e) = self
+            .local_file
+            .as_mut()
+            .unwrap()
+            .update_sync_error_state(false)
+        {
+            warn!(target: "tasks::upload", task_id = %self.task.task_id, local_path = %self.task.payload.local_path_display(), error = ?e, "Failed to clear sync error state");
+        }
+
         // Handle empty files and directories separately
         let upload_res = match (is_directory, file_size == 0, self.inventory_meta.is_none()) {
             (true, _, _) => self.create_empty_file_or_folder().await,
@@ -166,7 +178,41 @@ impl<'a> UploadTask<'a> {
     async fn handle_error(&mut self, r: Result<()>) -> Result<()> {
         match r {
             Ok(()) => Ok(()),
-            Err(e) => Err(e),
+            Err(e) => {
+                // Check if the error is an ApiError with StaleVersion (40076)
+                // The error might be wrapped with anyhow context, so check the chain
+                let is_stale_version = e.chain().any(|cause| {
+                    if let Some(api_err) = cause.downcast_ref::<ApiError>() {
+                        matches!(
+                            api_err,
+                            ApiError::ApiError { code, .. }
+                                if *code == ErrorCode::StaleVersion as i32
+                        )
+                    } else {
+                        false
+                    }
+                });
+
+                if is_stale_version {
+                    warn!(
+                        target: "tasks::upload",
+                        task_id = %self.task.task_id,
+                        local_path = %self.task.payload.local_path_display(),
+                        "Stale version detected, server has newer version, skipping upload"
+                    );
+                }
+
+                // Mark file as error state
+                if let Err(e) = self
+                    .local_file
+                    .as_mut()
+                    .unwrap()
+                    .update_sync_error_state(true)
+                {
+                    warn!(target: "tasks::upload", task_id = %self.task.task_id, local_path = %self.task.payload.local_path_display(), error = ?e, "Failed to update sync error state");
+                }
+                Err(e)
+            }
         }
     }
 
