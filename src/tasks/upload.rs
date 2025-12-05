@@ -1,68 +1,46 @@
-use std::{
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{path::PathBuf, str::FromStr, sync::Arc, time::SystemTime};
 
 use crate::{
-    cfapi::{
-        metadata::{self, Metadata},
-        placeholder::{ConvertOptions, LocalFileInfo, OpenOptions, Placeholder, UpdateOptions},
-    },
-    drive::{
-        placeholder::CrPlaceholder,
-        sync::cloud_file_to_metadata_entry,
-        utils::{local_path_to_cr_uri, notify_shell_change},
-    },
-    inventory::{FileMetadata, InventoryDb, MetadataEntry, TaskStatus, TaskUpdate},
-    tasks::{TaskQueue, queue::QueuedTask},
+    drive::{placeholder::CrPlaceholder, utils::local_path_to_cr_uri},
+    inventory::{FileMetadata, InventoryDb},
+    tasks::queue::QueuedTask,
     uploader::{ProgressCallback, ProgressUpdate, UploadParams, Uploader, UploaderConfig},
 };
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
 use cloudreve_api::{
     ApiError, Client,
     api::ExplorerApi,
     error::ErrorCode,
-    models::explorer::{CreateFileService, FileResponse, FileUpdateService, file_type},
+    models::explorer::{CreateFileService, FileResponse, FileUpdateService},
 };
-use nt_time::FileTime;
+use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
-use tracing::{self, debug, error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
-use windows::Win32::UI::Shell::{SHCNE_CREATE, SHCNE_MKDIR};
 
-/// Progress reporter that updates task state
-struct TaskProgressReporter {
+use super::types::TaskProgress;
+
+/// Progress reporter that updates task progress in-memory via a DashMap reference.
+/// Does NOT persist to inventory - only keeps in-memory for real-time queries.
+pub struct InMemoryProgressReporter {
     task_id: String,
-    inventory: Arc<InventoryDb>,
+    progress_map: Arc<DashMap<String, TaskProgress>>,
 }
 
-impl TaskProgressReporter {
-    fn new(task_id: String, inventory: Arc<InventoryDb>) -> Self {
-        Self { task_id, inventory }
+impl InMemoryProgressReporter {
+    pub fn new(task_id: String, progress_map: Arc<DashMap<String, TaskProgress>>) -> Self {
+        Self {
+            task_id,
+            progress_map,
+        }
     }
 }
 
-impl ProgressCallback for TaskProgressReporter {
+impl ProgressCallback for InMemoryProgressReporter {
     fn on_progress(&self, update: ProgressUpdate) {
-        // Update task progress in inventory
-        let task_update = TaskUpdate {
-            progress: Some(update.progress),
-            processed_bytes: Some(update.uploaded as i64),
-            total_bytes: Some(update.total_size as i64),
-            ..Default::default()
-        };
-
-        if let Err(e) = self.inventory.update_task(&self.task_id, task_update) {
-            warn!(
-                target: "tasks::upload",
-                task_id = %self.task_id,
-                error = %e,
-                "Failed to persist upload progress"
-            );
+        if let Some(mut entry) = self.progress_map.get_mut(&self.task_id) {
+            entry.update_from_progress(&update);
         }
     }
 }
@@ -77,6 +55,8 @@ pub struct UploadTask<'a> {
     local_file: Option<CrPlaceholder>,
     inventory_meta: Option<FileMetadata>,
     cancel_token: CancellationToken,
+    /// Reference to the in-memory progress map for real-time progress updates
+    progress_map: Arc<DashMap<String, TaskProgress>>,
 }
 
 impl<'a> UploadTask<'a> {
@@ -87,6 +67,7 @@ impl<'a> UploadTask<'a> {
         task: &'a QueuedTask,
         sync_path: PathBuf,
         remote_base: String,
+        progress_map: Arc<DashMap<String, TaskProgress>>,
     ) -> Self {
         Self {
             inventory,
@@ -98,10 +79,12 @@ impl<'a> UploadTask<'a> {
             sync_path,
             remote_base,
             cancel_token: CancellationToken::new(),
+            progress_map,
         }
     }
 
     /// Set the cancellation token
+    #[allow(dead_code)]
     pub fn with_cancel_token(mut self, token: CancellationToken) -> Self {
         self.cancel_token = token;
         self
@@ -187,6 +170,7 @@ impl<'a> UploadTask<'a> {
                             api_err,
                             ApiError::ApiError { code, .. }
                                 if *code == ErrorCode::StaleVersion as i32
+                                || *code == ErrorCode::ObjectExisted as i32
                         )
                     } else {
                         false
@@ -301,15 +285,18 @@ impl<'a> UploadTask<'a> {
         let uploader = Uploader::new(self.cr_client.clone(), self.inventory.clone(), config)
             .with_cancel_token(self.cancel_token.clone());
 
-        // Create progress reporter
-        let progress = TaskProgressReporter::new(self.task.task_id.clone(), self.inventory.clone());
+        // Create in-memory progress reporter (does not persist to inventory)
+        let progress = InMemoryProgressReporter::new(
+            self.task.task_id.clone(),
+            Arc::clone(&self.progress_map),
+        );
 
         // Execute upload
         uploader
             .upload(params, progress)
             .await
             .context("failed to upload file")?;
-        
+
         // Update local file placeholder status after successful upload
         self.finalize_upload().await?;
 
@@ -338,7 +325,8 @@ impl<'a> UploadTask<'a> {
             .await
             .context("failed to get file info after upload")?;
 
-        //self.file_uploaded(&file_info)
+        self.file_uploaded(&file_info)
+            .context("failed to commit uploaded file")?;
         Ok(())
     }
 
@@ -398,6 +386,12 @@ impl<'a> UploadTask<'a> {
             .as_mut()
             .unwrap()
             .commit(self.inventory.clone())?;
+
+        self.local_file
+            .as_mut()
+            .unwrap()
+            .update_sync_error_state(false)
+            .context("failed to clear sync error state")?;
         Ok(())
     }
 }

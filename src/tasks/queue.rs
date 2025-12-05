@@ -4,7 +4,7 @@ use crate::tasks::upload::UploadTask;
 use anyhow::{Context, Result, anyhow};
 use cloudreve_api::Client;
 use dashmap::DashMap;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -13,11 +13,8 @@ use tokio::sync::{
     mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
 use tokio::task::JoinHandle;
-use tokio::time::{Duration, sleep};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-
-const PLACEHOLDER_STEPS: u32 = 500;
 
 #[derive(Debug, Clone)]
 pub struct TaskQueueConfig {
@@ -44,7 +41,7 @@ pub struct TaskQueue {
     idle_notify: Notify,
     shutting_down: AtomicBool,
     cancel_requested: AtomicBool,
-    progress: DashMap<String, TaskProgress>,
+    progress: Arc<DashMap<String, TaskProgress>>,
     task_handles: DashMap<String, JoinHandle<()>>,
     /// Maps task_id to local_path for running tasks, used for path-based cancellation
     task_paths: DashMap<String, String>,
@@ -78,7 +75,7 @@ impl TaskQueue {
             idle_notify: Notify::new(),
             shutting_down: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
-            progress: DashMap::new(),
+            progress: Arc::new(DashMap::new()),
             task_handles: DashMap::new(),
             task_paths: DashMap::new(),
         });
@@ -510,6 +507,7 @@ impl TaskQueue {
                     &task,
                     self.sync_path.clone(),
                     self.remote_base.clone(),
+                    Arc::clone(&self.progress),
                 );
 
                 task_executor.execute().await?;
@@ -556,6 +554,7 @@ impl TaskQueue {
         Ok(TaskRunState::Completed)
     }
 
+    #[allow(dead_code)]
     async fn wait_for_idle(&self) {
         while self.inflight.load(Ordering::SeqCst) > 0 {
             self.idle_notify.notified().await;
@@ -569,6 +568,7 @@ impl TaskQueue {
         );
     }
 
+    #[allow(dead_code)]
     async fn clear_progress_entry(&self, task_id: &str) {
         self.progress.remove(task_id);
     }
@@ -688,6 +688,7 @@ impl TaskQueue {
     }
 }
 
+#[allow(dead_code)]
 pub enum TaskRunState {
     Completed,
     Cancelled,

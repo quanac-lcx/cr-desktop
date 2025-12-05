@@ -40,6 +40,7 @@ pub struct LockApplication {
 pub enum ErrorCode {
     Success = 0,
     Continue = 203,
+    ObjectExisted = 40004,
     ParentNotExist = 40016,
     CredentialInvalid = 40020,
     IncorrectPassword = 40069,

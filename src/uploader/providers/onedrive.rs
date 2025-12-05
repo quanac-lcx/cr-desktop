@@ -1,12 +1,15 @@
 //! OneDrive upload implementation
 
-use crate::uploader::chunk::{ChunkInfo, ChunkStream};
+use crate::uploader::chunk::ChunkInfo;
 use crate::uploader::session::UploadSession;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use bytes::Bytes;
 use cloudreve_api::Client as CrClient;
 use cloudreve_api::api::ExplorerApi;
+use futures::Stream;
 use reqwest::{Body, Client as HttpClient};
 use serde::Deserialize;
+use std::io;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -42,21 +45,22 @@ struct OneDriveInnerError {
     code: String,
 }
 
-/// Upload chunk to OneDrive using streaming
-pub async fn upload_chunk(
+/// Upload chunk to OneDrive using generic stream
+pub async fn upload_chunk_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     // OneDrive doesn't support empty files
     if session.file_size == 0 {
         bail!("OneDrive does not support empty file uploads");
     }
 
-    let url = session
-        .upload_url()
-        .context("no upload URL for OneDrive")?;
+    let url = session.upload_url().context("no upload URL for OneDrive")?;
 
     // Calculate byte range
     let range_start = chunk.offset;
@@ -108,11 +112,17 @@ pub async fn upload_chunk(
 
         bail!(
             "OneDrive error ({}): {}",
-            error.error.code, error.error.message
+            error.error.code,
+            error.error.message
         );
     }
 
-    bail!("OneDrive chunk {} upload failed: HTTP {}: {}", chunk.index, status, body)
+    bail!(
+        "OneDrive chunk {} upload failed: HTTP {}: {}",
+        chunk.index,
+        status,
+        body
+    )
 }
 
 /// Query OneDrive session status to get next expected range
@@ -120,9 +130,7 @@ pub async fn query_session_status(
     http_client: &HttpClient,
     session: &UploadSession,
 ) -> Result<Vec<String>> {
-    let url = session
-        .upload_url()
-        .context("no upload URL for OneDrive")?;
+    let url = session.upload_url().context("no upload URL for OneDrive")?;
 
     let response = http_client
         .get(url)
@@ -133,7 +141,11 @@ pub async fn query_session_status(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        bail!("failed to query OneDrive session: HTTP {}: {}", status, body);
+        bail!(
+            "failed to query OneDrive session: HTTP {}: {}",
+            status,
+            body
+        );
     }
 
     let chunk_response: OneDriveChunkResponse = response
@@ -145,10 +157,7 @@ pub async fn query_session_status(
 }
 
 /// Complete OneDrive upload by calling Cloudreve callback
-pub async fn complete_upload(
-    cr_client: &Arc<CrClient>,
-    session: &UploadSession,
-) -> Result<()> {
+pub async fn complete_upload(cr_client: &Arc<CrClient>, session: &UploadSession) -> Result<()> {
     debug!(
         target: "uploader::onedrive",
         session_id = session.session_id(),

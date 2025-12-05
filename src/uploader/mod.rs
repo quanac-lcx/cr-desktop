@@ -122,7 +122,7 @@ impl Uploader {
     /// - Reporting progress
     /// - Persisting state for resumability
     /// - Completing the upload
-    pub async fn upload<P: ProgressCallback>(
+    pub async fn upload<P: ProgressCallback + 'static>(
         &self,
         params: UploadParams,
         progress: P,
@@ -141,9 +141,18 @@ impl Uploader {
                 info!(
                     target: "uploader",
                     session_id = %session.session_id(),
-                    "Resuming existing upload session"
+                    "Found existing upload session, removing it"
                 );
-                session
+                if let Err(e) = self.delete_remote_session(&session).await {
+                    warn!(
+                        target: "uploader",
+                        session_id = %session.session_id(),
+                        error = %e,
+                        "Failed to delete remote upload session, will continue with new session"
+                    );
+                }
+                self.cleanup_session(&session).await?;
+                self.create_session(&params).await?
             }
             None => {
                 debug!(
@@ -158,12 +167,13 @@ impl Uploader {
         let chunk_uploader = self.create_chunk_uploader(&session)?;
 
         // Upload all chunks
+        let progress = Arc::new(progress);
         let result = chunk_uploader
             .upload_all(
                 &params.local_path,
                 &mut session,
                 &self.inventory,
-                &progress,
+                progress,
                 &self.cancel_token,
             )
             .await;
@@ -203,11 +213,13 @@ impl Uploader {
     }
 
     /// Cancel the current upload
+    #[allow(dead_code)]
     pub fn cancel(&self) {
         self.cancel_token.cancel();
     }
 
     /// Check if upload is cancelled
+    #[allow(dead_code)]
     pub fn is_cancelled(&self) -> bool {
         self.cancel_token.is_cancelled()
     }

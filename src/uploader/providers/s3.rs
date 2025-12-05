@@ -2,22 +2,28 @@
 //!
 //! Supports: OSS, COS, S3, KS3, OBS
 
-use crate::uploader::chunk::{ChunkInfo, ChunkProgress, ChunkStream};
+use crate::uploader::chunk::{ChunkInfo, ChunkProgress};
 use crate::uploader::session::UploadSession;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use bytes::Bytes;
 use cloudreve_api::Client as CrClient;
 use cloudreve_api::api::ExplorerApi;
+use futures::Stream;
 use reqwest::{Body, Client as HttpClient};
+use std::io;
 use std::sync::Arc;
 use tracing::debug;
 
-/// Upload chunk to S3/KS3 using streaming
-pub async fn upload_chunk_s3(
+/// Upload chunk to S3/KS3 using generic stream
+pub async fn upload_chunk_s3_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     let url = session
         .upload_url_for_chunk(chunk.index)
         .with_context(|| format!("no upload URL for chunk {}", chunk.index))?;
@@ -45,7 +51,11 @@ pub async fn upload_chunk_s3(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        bail!("chunk {} upload failed: {}", chunk.index, format_s3_error(status.as_u16(), &body));
+        bail!(
+            "chunk {} upload failed: {}",
+            chunk.index,
+            format_s3_error(status.as_u16(), &body)
+        );
     }
 
     // Extract ETag from response headers
@@ -58,44 +68,50 @@ pub async fn upload_chunk_s3(
     Ok(etag)
 }
 
-/// Upload chunk to OSS
-pub async fn upload_chunk_oss(
+/// Upload chunk to OSS with generic stream
+pub async fn upload_chunk_oss_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     // OSS uses the same mechanism as S3
-    upload_chunk_s3(http_client, chunk, stream, session).await
+    upload_chunk_s3_generic(http_client, chunk, stream, session).await
 }
 
-/// Upload chunk to COS
-pub async fn upload_chunk_cos(
+/// Upload chunk to COS with generic stream
+pub async fn upload_chunk_cos_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     // COS uses the same mechanism as S3
-    upload_chunk_s3(http_client, chunk, stream, session).await
+    upload_chunk_s3_generic(http_client, chunk, stream, session).await
 }
 
-/// Upload chunk to OBS
-pub async fn upload_chunk_obs(
+/// Upload chunk to OBS with generic stream
+pub async fn upload_chunk_obs_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     // OBS uses the same mechanism as S3
-    upload_chunk_s3(http_client, chunk, stream, session).await
+    upload_chunk_s3_generic(http_client, chunk, stream, session).await
 }
 
 /// Complete multipart upload for OSS (uses x-oss-complete-all header)
-pub async fn complete_upload_oss(
-    http_client: &HttpClient,
-    session: &UploadSession,
-) -> Result<()> {
+pub async fn complete_upload_oss(http_client: &HttpClient, session: &UploadSession) -> Result<()> {
     let url = session.complete_url();
 
     debug!(
@@ -116,7 +132,10 @@ pub async fn complete_upload_oss(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        bail!("failed to complete OSS upload: {}", format_s3_error(status.as_u16(), &body));
+        bail!(
+            "failed to complete OSS upload: {}",
+            format_s3_error(status.as_u16(), &body)
+        );
     }
 
     Ok(())
@@ -154,17 +173,17 @@ pub async fn complete_upload_s3like(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        bail!("failed to complete S3-like upload: {}", format_s3_error(status.as_u16(), &body));
+        bail!(
+            "failed to complete S3-like upload: {}",
+            format_s3_error(status.as_u16(), &body)
+        );
     }
 
     Ok(())
 }
 
 /// Complete multipart upload for OBS
-pub async fn complete_upload_obs(
-    http_client: &HttpClient,
-    session: &UploadSession,
-) -> Result<()> {
+pub async fn complete_upload_obs(http_client: &HttpClient, session: &UploadSession) -> Result<()> {
     let url = session.complete_url();
     let body = build_complete_multipart_xml(&session.chunk_progress);
 
@@ -198,7 +217,10 @@ pub async fn complete_upload_obs(
             }
         }
 
-        bail!("failed to complete OBS upload: {}", format_s3_error(status.as_u16(), &body));
+        bail!(
+            "failed to complete OBS upload: {}",
+            format_s3_error(status.as_u16(), &body)
+        );
     }
 
     Ok(())

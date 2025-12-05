@@ -1,10 +1,13 @@
 //! Qiniu Cloud Storage upload implementation
 
-use crate::uploader::chunk::{ChunkInfo, ChunkStream};
+use crate::uploader::chunk::ChunkInfo;
 use crate::uploader::session::UploadSession;
 use anyhow::{bail, Context, Result};
+use bytes::Bytes;
+use futures::Stream;
 use reqwest::{Body, Client as HttpClient};
 use serde::{Deserialize, Serialize};
+use std::io;
 use tracing::debug;
 
 /// Qiniu chunk upload response
@@ -38,16 +41,17 @@ struct QiniuCompleteRequest {
     mime_type: Option<String>,
 }
 
-/// Upload chunk to Qiniu using streaming
-pub async fn upload_chunk(
+/// Upload chunk to Qiniu using generic stream
+pub async fn upload_chunk_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
-    let base_url = session
-        .upload_url()
-        .context("no upload URL for Qiniu")?;
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
+    let base_url = session.upload_url().context("no upload URL for Qiniu")?;
 
     // Qiniu uses 1-based part numbers in URL
     let url = format!("{}/{}", base_url, chunk.index + 1);
@@ -82,7 +86,12 @@ pub async fn upload_chunk(
             bail!("Qiniu error: {}", error.error);
         }
 
-        bail!("Qiniu chunk {} upload failed: HTTP {}: {}", chunk.index, status, body);
+        bail!(
+            "Qiniu chunk {} upload failed: HTTP {}: {}",
+            chunk.index,
+            status,
+            body
+        );
     }
 
     // Parse response to get ETag
@@ -95,10 +104,7 @@ pub async fn upload_chunk(
 }
 
 /// Complete Qiniu multipart upload
-pub async fn complete_upload(
-    http_client: &HttpClient,
-    session: &UploadSession,
-) -> Result<()> {
+pub async fn complete_upload(http_client: &HttpClient, session: &UploadSession) -> Result<()> {
     let url = session
         .upload_url()
         .context("no upload URL for Qiniu completion")?;

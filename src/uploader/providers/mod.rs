@@ -6,12 +6,15 @@ mod qiniu;
 mod s3;
 mod upyun;
 
-use crate::uploader::chunk::{ChunkInfo, ChunkStream};
+use crate::uploader::chunk::ChunkInfo;
 use crate::uploader::session::UploadSession;
 use anyhow::Result;
+use bytes::Bytes;
 use cloudreve_api::Client as CrClient;
 use cloudreve_api::models::explorer::PolicyType as ApiPolicyType;
+use futures::Stream;
 use reqwest::Client as HttpClient;
+use std::io;
 use std::sync::Arc;
 
 /// Supported storage policy types
@@ -112,28 +115,33 @@ impl PolicyType {
     }
 }
 
-/// Upload a chunk to the appropriate provider using streaming
-pub async fn upload_chunk(
+/// Upload a chunk to the appropriate provider using streaming with progress tracking
+pub async fn upload_chunk_with_progress<S>(
     http_client: &HttpClient,
     cr_client: &Arc<CrClient>,
     policy_type: PolicyType,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     match policy_type {
         PolicyType::Local | PolicyType::Remote => {
-            local::upload_chunk(http_client, cr_client, chunk, stream, session).await
+            local::upload_chunk_generic(http_client, cr_client, chunk, stream, session).await
         }
-        PolicyType::Oss => s3::upload_chunk_oss(http_client, chunk, stream, session).await,
-        PolicyType::Cos => s3::upload_chunk_cos(http_client, chunk, stream, session).await,
+        PolicyType::Oss => s3::upload_chunk_oss_generic(http_client, chunk, stream, session).await,
+        PolicyType::Cos => s3::upload_chunk_cos_generic(http_client, chunk, stream, session).await,
         PolicyType::S3 | PolicyType::Ks3 => {
-            s3::upload_chunk_s3(http_client, chunk, stream, session).await
+            s3::upload_chunk_s3_generic(http_client, chunk, stream, session).await
         }
-        PolicyType::Obs => s3::upload_chunk_obs(http_client, chunk, stream, session).await,
-        PolicyType::OneDrive => onedrive::upload_chunk(http_client, chunk, stream, session).await,
-        PolicyType::Qiniu => qiniu::upload_chunk(http_client, chunk, stream, session).await,
-        PolicyType::Upyun => upyun::upload_chunk(http_client, chunk, stream, session).await,
+        PolicyType::Obs => s3::upload_chunk_obs_generic(http_client, chunk, stream, session).await,
+        PolicyType::OneDrive => {
+            onedrive::upload_chunk_generic(http_client, chunk, stream, session).await
+        }
+        PolicyType::Qiniu => qiniu::upload_chunk_generic(http_client, chunk, stream, session).await,
+        PolicyType::Upyun => upyun::upload_chunk_generic(http_client, chunk, stream, session).await,
     }
 }
 

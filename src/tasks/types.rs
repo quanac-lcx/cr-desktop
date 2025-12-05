@@ -92,9 +92,17 @@ pub struct TaskProgress {
     pub task_id: String,
     pub kind: TaskKind,
     pub local_path: String,
+    /// Progress percentage (0.0 - 1.0)
     pub progress: f64,
+    /// Bytes processed so far
     pub processed_bytes: Option<i64>,
+    /// Total bytes to process
     pub total_bytes: Option<i64>,
+    /// Upload/download speed in bytes per second
+    pub speed_bytes_per_sec: u64,
+    /// Estimated time remaining in seconds
+    pub eta_seconds: Option<u64>,
+    /// Custom state for task-specific data
     pub custom_state: Option<Value>,
 }
 
@@ -107,8 +115,36 @@ impl TaskProgress {
             progress: 0.0,
             processed_bytes: payload.processed_bytes,
             total_bytes: payload.total_bytes,
+            speed_bytes_per_sec: 0,
+            eta_seconds: None,
             custom_state: payload.custom_state.clone(),
         }
+    }
+
+    /// Update progress with speed and ETA information
+    pub fn update_with_speed(
+        &mut self,
+        progress: f64,
+        processed_bytes: i64,
+        total_bytes: i64,
+        speed_bytes_per_sec: u64,
+        eta_seconds: Option<u64>,
+    ) {
+        self.progress = progress;
+        self.processed_bytes = Some(processed_bytes);
+        self.total_bytes = Some(total_bytes);
+        self.speed_bytes_per_sec = speed_bytes_per_sec;
+        self.eta_seconds = eta_seconds;
+    }
+
+    /// Update progress from ProgressUpdate
+    pub fn update_from_progress(&mut self, update: &crate::uploader::ProgressUpdate) {
+        self.progress = update.progress;
+        self.processed_bytes = Some(update.uploaded as i64);
+        self.total_bytes = Some(update.total_size as i64);
+        self.speed_bytes_per_sec = update.speed_bytes_per_sec;
+        self.eta_seconds = update.eta_seconds;
+        tracing::debug!(update=?update, current = ?self, "Updated progress from ProgressUpdate");
     }
 
     pub fn update(

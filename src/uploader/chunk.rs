@@ -1,11 +1,10 @@
-//! Chunk-based upload logic with streaming support
+//! Chunk-based upload logic with streaming support and progress tracking
 
-use crate::cfapi::placeholder::{ArcWin32Handle, OpenOptions, Placeholder};
 use crate::inventory::InventoryDb;
 use crate::uploader::UploaderConfig;
 use crate::uploader::encrypt::EncryptionConfig;
-use crate::uploader::error::{UploadError, UploadResult};
-use crate::uploader::progress::{ChunkProgressInfo, ProgressCallback, ProgressUpdate};
+use crate::uploader::error::UploadError;
+use crate::uploader::progress::{ProgressCallback, ProgressTracker};
 use crate::uploader::providers::{self, PolicyType};
 use crate::uploader::session::UploadSession;
 use anyhow::{Context, Result};
@@ -15,15 +14,13 @@ use futures::Stream;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::mem::ManuallyDrop;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader, ReadBuf, SeekFrom};
+use tokio::io::{AsyncRead, AsyncSeekExt, BufReader, ReadBuf, SeekFrom};
 use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -111,7 +108,6 @@ impl ChunkReader {
         let mut reader = BufReader::with_capacity(STREAM_BUFFER_SIZE, file);
         reader.seek(SeekFrom::Start(offset)).await?;
 
-
         Ok(Self {
             reader,
             encryption,
@@ -122,11 +118,11 @@ impl ChunkReader {
     }
 
     /// Get the total size of this chunk
+    #[allow(dead_code)]
     pub fn size(&self) -> u64 {
         self.position + self.remaining
     }
 }
-
 
 impl AsyncRead for ChunkReader {
     fn poll_read(
@@ -235,6 +231,50 @@ impl Stream for ChunkStream {
     }
 }
 
+/// A stream wrapper that tracks progress at byte level.
+/// Reports progress through the ProgressTracker with throttling.
+pub struct ProgressStream<S> {
+    inner: S,
+    tracker: Arc<ProgressTracker>,
+    bytes_sent_this_chunk: u64,
+}
+
+impl<S> ProgressStream<S> {
+    /// Create a new progress-aware stream
+    pub fn new(inner: S, tracker: Arc<ProgressTracker>) -> Self {
+        Self {
+            inner,
+            tracker,
+            bytes_sent_this_chunk: 0,
+        }
+    }
+
+    /// Get bytes sent in this chunk stream
+    #[allow(dead_code)]
+    pub fn bytes_sent(&self) -> u64 {
+        self.bytes_sent_this_chunk
+    }
+}
+
+impl<S> Stream for ProgressStream<S>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Unpin,
+{
+    type Item = Result<Bytes, io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                let len = bytes.len() as u64;
+                self.bytes_sent_this_chunk += len;
+                self.tracker.add_bytes(len);
+                Poll::Ready(Some(Ok(bytes)))
+            }
+            other => other,
+        }
+    }
+}
+
 /// Chunk uploader that handles uploading chunks to different providers
 pub struct ChunkUploader {
     http_client: HttpClient,
@@ -259,13 +299,16 @@ impl ChunkUploader {
         }
     }
 
-    /// Upload all chunks for a file
-    pub async fn upload_all<P: ProgressCallback>(
+    /// Upload all chunks for a file with progress tracking
+    ///
+    /// The progress_callback is wrapped in Arc so it can be shared with the
+    /// background progress reporter task.
+    pub async fn upload_all<P: ProgressCallback + 'static>(
         &self,
         local_path: &Path,
         session: &mut UploadSession,
         inventory: &InventoryDb,
-        progress: &P,
+        progress_callback: Arc<P>,
         cancel_token: &CancellationToken,
     ) -> Result<()> {
         info!(
@@ -300,9 +343,78 @@ impl ChunkUploader {
             "Uploading pending chunks"
         );
 
+        // Create progress tracker
+        let tracker = ProgressTracker::new(session.file_size, session.num_chunks());
+
+        // Initialize tracker with already completed chunks
+        let completed_bytes: u64 = session
+            .chunk_progress
+            .iter()
+            .filter(|c| c.is_complete())
+            .map(|c| c.loaded)
+            .sum();
+        if completed_bytes > 0 {
+            // Add completed bytes directly to completed_bytes counter
+            for chunk in session.chunk_progress.iter().filter(|c| c.is_complete()) {
+                tracker.complete_chunk(chunk.loaded);
+            }
+        }
+
+        // Spawn progress reporter task
+        let reporter_tracker = Arc::clone(&tracker);
+        let reporter_cancel = cancel_token.clone();
+        let reporter_callback = Arc::clone(&progress_callback);
+
+        let reporter_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                        let update = reporter_tracker.create_update().await;
+                        reporter_callback.on_progress(update);
+                    }
+                    _ = reporter_cancel.cancelled() => {
+                        break;
+                    }
+                }
+            }
+        });
+
         // Upload chunks sequentially
         // TODO: Implement concurrent chunk upload with proper ordering
-        for chunk_index in pending_chunks {
+        let result = self
+            .upload_chunks_sequential(
+                local_path,
+                session,
+                inventory,
+                &pending_chunks,
+                encryption,
+                &tracker,
+                cancel_token,
+            )
+            .await;
+
+        // Stop the reporter
+        reporter_handle.abort();
+
+        // Send final progress update
+        let final_update = tracker.create_update().await;
+        progress_callback.on_progress(final_update);
+
+        result
+    }
+
+    /// Upload chunks sequentially
+    async fn upload_chunks_sequential(
+        &self,
+        local_path: &Path,
+        session: &mut UploadSession,
+        inventory: &InventoryDb,
+        pending_chunks: &[usize],
+        encryption: Option<EncryptionConfig>,
+        tracker: &Arc<ProgressTracker>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        for &chunk_index in pending_chunks {
             // Check for cancellation
             if cancel_token.is_cancelled() {
                 return Err(anyhow::anyhow!("Upload cancelled"));
@@ -314,6 +426,9 @@ impl ChunkUploader {
 
             let chunk = ChunkInfo::new(chunk_index, offset, chunk_size);
 
+            // Mark chunk as active
+            tracker.start_chunk();
+
             // Upload with retries (stream is created inside retry loop)
             let etag = self
                 .upload_chunk_with_retry(
@@ -321,14 +436,18 @@ impl ChunkUploader {
                     &chunk,
                     session,
                     encryption.clone(),
+                    tracker,
                     cancel_token,
                 )
                 .await?;
 
+            // Mark chunk as complete in tracker
+            tracker.complete_chunk(chunk_size);
+
             // Update session progress
             session.complete_chunk(chunk_index, etag);
 
-            // Persist progress to database
+            // Persist progress to database (for resumability)
             if let Err(e) =
                 inventory.update_upload_session_progress(&session.id, &session.chunk_progress)
             {
@@ -338,9 +457,6 @@ impl ChunkUploader {
                     "Failed to persist chunk progress"
                 );
             }
-
-            // Report progress
-            self.report_progress(session, Some(chunk_index), progress);
         }
 
         Ok(())
@@ -353,9 +469,10 @@ impl ChunkUploader {
         chunk: &ChunkInfo,
         session: &UploadSession,
         encryption: Option<EncryptionConfig>,
+        tracker: &Arc<ProgressTracker>,
         cancel_token: &CancellationToken,
     ) -> Result<Option<String>> {
-        let mut last_error = None;
+        let mut bytes_sent_this_attempt: u64 = 0;
 
         for attempt in 0..=self.config.max_retries {
             if cancel_token.is_cancelled() {
@@ -363,6 +480,12 @@ impl ChunkUploader {
             }
 
             if attempt > 0 {
+                // Reset bytes from failed attempt
+                if bytes_sent_this_attempt > 0 {
+                    tracker.reset_chunk_bytes(bytes_sent_this_attempt);
+                    bytes_sent_this_attempt = 0;
+                }
+
                 let delay = self.calculate_retry_delay(attempt);
                 debug!(
                     target: "uploader::chunk",
@@ -381,13 +504,16 @@ impl ChunkUploader {
             }
 
             // Create a fresh stream for each attempt
-            let stream = ChunkStream::from_chunk(local_path, chunk, encryption.clone())
+            let inner_stream = ChunkStream::from_chunk(local_path, chunk, encryption.clone())
                 .await
                 .map_err(|e| {
                     UploadError::FileReadError(format!("Failed to create stream: {}", e))
                 })?;
 
-            match self.upload_chunk(chunk, stream, session).await {
+            // Wrap with progress tracking
+            let progress_stream = ProgressStream::new(inner_stream, Arc::clone(tracker));
+
+            match self.upload_chunk(chunk, progress_stream, session).await {
                 Ok(etag) => {
                     debug!(
                         target: "uploader::chunk",
@@ -415,7 +541,6 @@ impl ChunkUploader {
                         attempt,
                         "Chunk upload failed, will retry"
                     );
-                    last_error = Some(e);
                 }
             }
         }
@@ -424,13 +549,16 @@ impl ChunkUploader {
     }
 
     /// Upload a single chunk (provider-specific)
-    async fn upload_chunk(
+    async fn upload_chunk<S>(
         &self,
         chunk: &ChunkInfo,
-        stream: ChunkStream,
+        stream: ProgressStream<S>,
         session: &UploadSession,
-    ) -> Result<Option<String>> {
-        providers::upload_chunk(
+    ) -> Result<Option<String>>
+    where
+        S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+    {
+        providers::upload_chunk_with_progress(
             &self.http_client,
             &self.cr_client,
             self.policy_type,
@@ -447,37 +575,5 @@ impl ChunkUploader {
         let delay_ms = base * (1 << attempt.min(10)); // Cap exponential growth
         let delay = Duration::from_millis(delay_ms);
         delay.min(self.config.retry_max_delay)
-    }
-
-    /// Report progress to callback
-    fn report_progress<P: ProgressCallback>(
-        &self,
-        session: &UploadSession,
-        current_chunk: Option<usize>,
-        callback: &P,
-    ) {
-        let chunk_info: Vec<ChunkProgressInfo> = session
-            .chunk_progress
-            .iter()
-            .map(|c| {
-                let size = session.chunk_size_for(c.index);
-                ChunkProgressInfo {
-                    index: c.index,
-                    size,
-                    loaded: c.loaded,
-                    complete: c.is_complete(),
-                }
-            })
-            .collect();
-
-        let update = ProgressUpdate::new(
-            session.file_size,
-            session.total_uploaded(),
-            current_chunk,
-            session.num_chunks(),
-        )
-        .with_chunk_progress(chunk_info);
-
-        callback.on_progress(update);
     }
 }

@@ -3,42 +3,51 @@
 //! For Local policy: uploads chunks directly to Cloudreve server
 //! For Remote policy: uploads chunks to slave nodes
 
-use crate::uploader::chunk::{ChunkInfo, ChunkStream};
+use crate::uploader::chunk::ChunkInfo;
 use crate::uploader::session::UploadSession;
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use cloudreve_api::Client as CrClient;
 use cloudreve_api::api::ExplorerApi;
+use futures::Stream;
 use reqwest::{Body, Client as HttpClient};
+use std::io;
 use std::sync::Arc;
 use tracing::debug;
 
-/// Upload a chunk for Local policy (via Cloudreve API)
-pub async fn upload_chunk(
+/// Upload a chunk for Local policy (via Cloudreve API) with generic stream
+pub async fn upload_chunk_generic<S>(
     http_client: &HttpClient,
     cr_client: &Arc<CrClient>,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     // Check if this is a remote (slave) upload
     if let Some(url) = session.upload_url() {
         if !url.is_empty() && !url.starts_with("/") {
             // Remote slave upload
-            return upload_chunk_remote(http_client, chunk, stream, session).await;
+            return upload_chunk_remote_generic(http_client, chunk, stream, session).await;
         }
     }
 
     // Local upload via Cloudreve API
-    upload_chunk_local(cr_client, chunk, stream, session).await
+    upload_chunk_local_generic(cr_client, chunk, stream, session).await
 }
 
 /// Upload chunk to local Cloudreve server using streaming body
-async fn upload_chunk_local(
+async fn upload_chunk_local_generic<S>(
     cr_client: &Arc<CrClient>,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     debug!(
         target: "uploader::local",
         chunk = chunk.index,
@@ -51,18 +60,22 @@ async fn upload_chunk_local(
 
     cr_client
         .upload_chunk_stream(session.session_id(), chunk.index, chunk.size, body)
-        .await.context("failed to upload chunk")?;
+        .await
+        .context("failed to upload chunk")?;
 
     Ok(None)
 }
 
 /// Upload chunk to remote slave node using streaming body
-async fn upload_chunk_remote(
+async fn upload_chunk_remote_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     let url = session
         .upload_url()
         .context("no upload URL for remote upload")?;

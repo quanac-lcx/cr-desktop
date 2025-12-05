@@ -2,12 +2,15 @@
 //!
 //! Upyun uses form-based upload with policy and authorization
 
-use crate::uploader::chunk::{ChunkInfo, ChunkStream};
+use crate::uploader::chunk::ChunkInfo;
 use crate::uploader::session::UploadSession;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use bytes::Bytes;
+use futures::Stream;
 use reqwest::Client as HttpClient;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
+use std::io;
 use tracing::debug;
 
 /// Upyun error response
@@ -17,24 +20,28 @@ struct UpyunError {
     code: i32,
 }
 
-/// Upload to Upyun (single request, form-based) using streaming
+/// Upload to Upyun (single request, form-based) using generic stream
 ///
 /// Note: Upyun doesn't support chunked uploads in the same way as other providers.
 /// The entire file is uploaded in a single form submission.
-pub async fn upload_chunk(
+pub async fn upload_chunk_generic<S>(
     http_client: &HttpClient,
     chunk: &ChunkInfo,
-    stream: ChunkStream,
+    stream: S,
     session: &UploadSession,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + Sync + Unpin + 'static,
+{
     // Upyun only supports single-chunk uploads
     if chunk.index != 0 {
-        bail!("Upyun only supports single-chunk uploads (got chunk {})", chunk.index);
+        bail!(
+            "Upyun only supports single-chunk uploads (got chunk {})",
+            chunk.index
+        );
     }
 
-    let url = session
-        .upload_url()
-        .context("no upload URL for Upyun")?;
+    let url = session.upload_url().context("no upload URL for Upyun")?;
 
     let policy = session
         .upload_policy()
