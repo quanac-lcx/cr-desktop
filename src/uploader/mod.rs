@@ -230,7 +230,7 @@ impl Uploader {
         params: &UploadParams,
     ) -> UploadResult<Option<UploadSession>> {
         // Try to load existing session from database
-        match self.inventory.get_upload_session(&params.task_id) {
+        match self.inventory.get_upload_session_by_path(&params.local_path.to_string_lossy().to_string()) {
             Ok(Some(session)) => {
                 // Check if session is still valid
                 if session.is_expired() {

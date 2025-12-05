@@ -33,14 +33,14 @@ impl InventoryDb {
             .transpose()
     }
 
-    /// Get upload session by session ID
-    pub fn get_upload_session_by_id(
+    /// Get upload session by local file path
+    pub fn get_upload_session_by_path(
         &self,
-        session_id: &str,
+        path: &str,
     ) -> Result<Option<crate::uploader::UploadSession>> {
         let mut conn = self.connection()?;
         let row = upload_sessions_dsl::upload_sessions
-            .filter(upload_sessions_dsl::id.eq(session_id))
+            .filter(upload_sessions_dsl::local_path.eq(path))
             .first::<UploadSessionQueryRow>(&mut conn)
             .optional()
             .context("Failed to query upload session by ID")?;
@@ -49,29 +49,6 @@ impl InventoryDb {
             .transpose()
     }
 
-    /// Update upload session chunk progress
-    pub fn update_upload_session_progress(
-        &self,
-        session_id: &str,
-        chunk_progress: &[crate::uploader::ChunkProgress],
-    ) -> Result<()> {
-        let mut conn = self.connection()?;
-        let progress_json =
-            serde_json::to_string(chunk_progress).context("Failed to serialize chunk progress")?;
-        let now = Utc::now().timestamp();
-
-        diesel::update(
-            upload_sessions_dsl::upload_sessions.filter(upload_sessions_dsl::id.eq(session_id)),
-        )
-        .set((
-            upload_sessions_dsl::chunk_progress.eq(&progress_json),
-            upload_sessions_dsl::updated_at.eq(now),
-        ))
-        .execute(&mut conn)
-        .context("Failed to update upload session progress")?;
-
-        Ok(())
-    }
 
     /// Delete upload session
     pub fn delete_upload_session(&self, session_id: &str) -> Result<()> {
@@ -84,16 +61,18 @@ impl InventoryDb {
         Ok(())
     }
 
-    /// Delete all upload sessions for a task
-    pub fn delete_upload_sessions_by_task(&self, task_id: &str) -> Result<()> {
+    pub fn batch_delete_upload_session_by_path(&self, paths: &[&str]) -> Result<bool> {
+        if paths.is_empty() {
+            return Ok(false);
+        }
+
         let mut conn = self.connection()?;
-        diesel::delete(
-            upload_sessions_dsl::upload_sessions
-                .filter(upload_sessions_dsl::task_id.eq(task_id)),
+        let affected = diesel::delete(
+            upload_sessions_dsl::upload_sessions.filter(upload_sessions_dsl::local_path.eq_any(paths)),
         )
         .execute(&mut conn)
-        .context("Failed to delete upload sessions for task")?;
-        Ok(())
+        .context("Failed to batch delete upload session by path")?;
+        Ok(affected > 0)
     }
 
     /// Delete expired upload sessions

@@ -144,11 +144,6 @@ impl AsyncRead for ChunkReader {
 
         match reader.poll_read(cx, &mut limited_buf) {
             Poll::Ready(Ok(())) => {
-                tracing::trace!(
-                    target: "uploader::chunk",
-                    bytes_read = limited_buf.filled().len() - before,
-                    "Bytes read"
-                );
                 let bytes_read = limited_buf.filled().len() - before;
                 if bytes_read == 0 {
                     // EOF reached
@@ -180,18 +175,9 @@ impl AsyncRead for ChunkReader {
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(e)) => {
-                tracing::error!(
-                    target: "uploader::chunk",
-                    error = ?e,
-                    "Error reading chunk"
-                );
                 Poll::Ready(Err(e))
             }
             Poll::Pending => {
-                tracing::trace!(
-                    target: "uploader::chunk",
-                    "Chunk reader is pending"
-                );
                 Poll::Pending
             }
         }
@@ -356,7 +342,7 @@ impl ChunkUploader {
         if completed_bytes > 0 {
             // Add completed bytes directly to completed_bytes counter
             for chunk in session.chunk_progress.iter().filter(|c| c.is_complete()) {
-                tracker.complete_chunk(chunk.loaded);
+                tracker.complete_chunk();
             }
         }
 
@@ -442,21 +428,10 @@ impl ChunkUploader {
                 .await?;
 
             // Mark chunk as complete in tracker
-            tracker.complete_chunk(chunk_size);
+            tracker.complete_chunk();
 
             // Update session progress
             session.complete_chunk(chunk_index, etag);
-
-            // Persist progress to database (for resumability)
-            if let Err(e) =
-                inventory.update_upload_session_progress(&session.id, &session.chunk_progress)
-            {
-                warn!(
-                    target: "uploader::chunk",
-                    error = %e,
-                    "Failed to persist chunk progress"
-                );
-            }
         }
 
         Ok(())

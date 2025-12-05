@@ -1,13 +1,14 @@
 //! Progress reporting for uploads with byte-level tracking, speed calculation,
 //! and support for concurrent chunk uploads.
 
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Progress update information sent to callbacks
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProgressUpdate {
     /// Total file size in bytes
     pub total_size: u64,
@@ -25,6 +26,69 @@ pub struct ProgressUpdate {
     pub total_chunks: usize,
     /// Completed chunk count
     pub completed_chunks: usize,
+}
+
+impl Debug for ProgressUpdate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Progress: {:.1}% ({} / {}) @ {} | ETA: {} | Chunks: {}/{} ({} active)",
+            self.progress * 100.0,
+            format_bytes(self.uploaded),
+            format_bytes(self.total_size),
+            format_speed(self.speed_bytes_per_sec),
+            format_eta(self.eta_seconds),
+            self.completed_chunks,
+            self.total_chunks,
+            self.concurrent_chunks,
+        )
+    }
+}
+
+/// Format bytes into human-readable string (e.g., "10.5 MB")
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+
+    if bytes >= TB {
+        format!("{:.2} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Format speed into human-readable string (e.g., "10.5 MB/s")
+fn format_speed(bytes_per_sec: u64) -> String {
+    format!("{}/s", format_bytes(bytes_per_sec))
+}
+
+/// Format ETA into human-readable string (e.g., "2m 30s")
+fn format_eta(eta_seconds: Option<u64>) -> String {
+    match eta_seconds {
+        None => "N/A".to_string(),
+        Some(0) => "0s".to_string(),
+        Some(secs) => {
+            let hours = secs / 3600;
+            let minutes = (secs % 3600) / 60;
+            let seconds = secs % 60;
+
+            if hours > 0 {
+                format!("{}h {}m {}s", hours, minutes, seconds)
+            } else if minutes > 0 {
+                format!("{}m {}s", minutes, seconds)
+            } else {
+                format!("{}s", seconds)
+            }
+        }
+    }
 }
 
 impl ProgressUpdate {
@@ -115,7 +179,7 @@ impl SpeedCalculator {
     fn new() -> Self {
         Self {
             samples: Vec::with_capacity(32),
-            window_duration: Duration::from_secs(2),
+            window_duration: Duration::from_secs(10),
         }
     }
 
@@ -156,8 +220,6 @@ pub struct ProgressTracker {
     total_size: u64,
     /// Total bytes uploaded (atomic for concurrent access)
     uploaded_bytes: AtomicU64,
-    /// Completed bytes from finished chunks (for accurate tracking)
-    completed_bytes: AtomicU64,
     /// Number of active concurrent chunk uploads
     active_chunks: AtomicU64,
     /// Total number of chunks
@@ -176,7 +238,6 @@ impl ProgressTracker {
         Arc::new(Self {
             total_size,
             uploaded_bytes: AtomicU64::new(0),
-            completed_bytes: AtomicU64::new(0),
             active_chunks: AtomicU64::new(0),
             total_chunks,
             completed_chunks: AtomicU64::new(0),
@@ -191,11 +252,9 @@ impl ProgressTracker {
     }
 
     /// Called when a chunk upload completes
-    pub fn complete_chunk(&self, chunk_size: u64) {
+    pub fn complete_chunk(&self) {
         self.active_chunks.fetch_sub(1, Ordering::SeqCst);
         self.completed_chunks.fetch_add(1, Ordering::SeqCst);
-        // Add the completed chunk size to completed_bytes
-        self.completed_bytes.fetch_add(chunk_size, Ordering::SeqCst);
     }
 
     /// Add bytes uploaded within current chunk(s)
@@ -211,7 +270,7 @@ impl ProgressTracker {
 
     /// Get total uploaded bytes (completed + in-flight)
     pub fn total_uploaded(&self) -> u64 {
-        self.completed_bytes.load(Ordering::SeqCst) + self.uploaded_bytes.load(Ordering::SeqCst)
+        self.uploaded_bytes.load(Ordering::SeqCst)
     }
 
     /// Force create a progress update (for final report)

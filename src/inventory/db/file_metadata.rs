@@ -1,5 +1,7 @@
 use super::InventoryDb;
-use crate::inventory::{FileMetadata, MetadataEntry};
+use crate::inventory::{
+    FileMetadata, MetadataEntry, schema::upload_sessions::dsl as upload_sessions_dsl,
+};
 use anyhow::{Context, Result};
 use diesel::prelude::*;
 use diesel::sql_types::Text;
@@ -116,6 +118,8 @@ impl InventoryDb {
             })
             .context("Failed to batch delete inventory metadata")?;
 
+        // Delete upload sessions
+        self.batch_delete_upload_session_by_path(&paths)?;
         Ok(affected > 0)
     }
 
@@ -306,4 +310,3 @@ impl FileMetadataChangeset {
         })
     }
 }
-
