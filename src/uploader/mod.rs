@@ -206,6 +206,16 @@ impl Uploader {
                         error = %e,
                         "Upload failed"
                     );
+                    if let Err(e) = self.delete_remote_session(&session).await {
+                        warn!(
+                            target: "uploader",
+                            local_path = %params.local_path.display(),
+                            error = %e,
+                            "Failed to delete remote upload session"
+                        );
+                    }
+                    // Clean up session from database
+                    self.cleanup_session(&session).await?;
                     Err(e.into())
                 }
             }
@@ -230,7 +240,10 @@ impl Uploader {
         params: &UploadParams,
     ) -> UploadResult<Option<UploadSession>> {
         // Try to load existing session from database
-        match self.inventory.get_upload_session_by_path(&params.local_path.to_string_lossy().to_string()) {
+        match self
+            .inventory
+            .get_upload_session_by_path(&params.local_path.to_string_lossy().to_string())
+        {
             Ok(Some(session)) => {
                 // Check if session is still valid
                 if session.is_expired() {

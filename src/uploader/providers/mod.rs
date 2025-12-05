@@ -16,6 +16,7 @@ use futures::Stream;
 use reqwest::Client as HttpClient;
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Supported storage policy types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,7 +176,8 @@ pub async fn complete_upload(
         PolicyType::OneDrive => onedrive::complete_upload(cr_client, session).await,
         PolicyType::Qiniu => qiniu::complete_upload(http_client, session).await,
         PolicyType::Upyun => {
-            // Upyun is single-request, no completion needed
+            // Sleep 10s for a callback
+            tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(())
         }
     }

@@ -123,6 +123,7 @@ pub async fn complete_upload_oss(http_client: &HttpClient, session: &UploadSessi
     let response = http_client
         .post(url)
         .header("Content-Type", "application/octet-stream")
+        .header("Content-Length", "0")
         .header("x-oss-forbid-overwrite", "true")
         .header("x-oss-complete-all", "yes")
         .send()

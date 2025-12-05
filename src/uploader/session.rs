@@ -97,7 +97,7 @@ impl UploadSession {
 
     /// Calculate number of chunks for a file
     fn calculate_num_chunks(file_size: u64, chunk_size: u64) -> usize {
-        if file_size == 0 {
+        if file_size == 0 || chunk_size == 0 {
             return 1; // Empty file still needs one "chunk"
         }
         ((file_size + chunk_size - 1) / chunk_size) as usize
@@ -144,6 +144,9 @@ impl UploadSession {
 
     /// Get the expected size for a specific chunk
     pub fn chunk_size_for(&self, chunk_index: usize) -> u64 {
+        if self.chunk_size == 0 {
+            return self.file_size;
+        }
         let start = chunk_index as u64 * self.chunk_size;
         let remaining = self.file_size.saturating_sub(start);
         remaining.min(self.chunk_size)
@@ -151,6 +154,9 @@ impl UploadSession {
 
     /// Get the byte range for a specific chunk
     pub fn chunk_range(&self, chunk_index: usize) -> (u64, u64) {
+        if self.chunk_size == 0 {
+            return (0, self.file_size);
+        }
         let start = chunk_index as u64 * self.chunk_size;
         let size = self.chunk_size_for(chunk_index);
         (start, start + size)
