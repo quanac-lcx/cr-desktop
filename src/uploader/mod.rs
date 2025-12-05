@@ -292,10 +292,9 @@ impl Uploader {
             },
             mime_type: params.mime_type.clone(),
             metadata: None,
-            encryption_supported: None,
-            // encryption_supported: Some(vec![
-            //     cloudreve_api::models::explorer::EncryptionCipher::Aes256Ctr,
-            // ]),
+            encryption_supported: Some(vec![
+                cloudreve_api::models::explorer::EncryptionCipher::Aes256Ctr,
+            ]),
         };
 
         let credential = self
