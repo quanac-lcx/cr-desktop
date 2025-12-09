@@ -1,7 +1,7 @@
 use crate::{
     cfapi::{
         filter::ticket,
-        placeholder::{LocalFileInfo, OpenOptions, PinState},
+        placeholder::{LocalFileInfo, OpenOptions, PinState, UpdateOptions},
         utility::WriteAt,
     },
     drive::{
@@ -321,6 +321,12 @@ impl Mount {
     }
 
     pub async fn rename_completed(&self, source: PathBuf, destination: PathBuf) -> Result<()> {
+        // If source or destination is ignored, do nothing
+        if self.ignore_matcher.is_match(&source) || self.ignore_matcher.is_match(&destination) {
+            tracing::debug!(target: "drive::commands", source = %source.display(), destination = %destination.display(), "Ignoring rename operation");
+            return Ok(());
+        }
+
         // Commit rename in inventory
         self.inventory
             .rename_path(
@@ -389,6 +395,13 @@ impl Mount {
             //    .register_once(&EventKind::Remove(RemoveKind::Any), source.clone());
             return Ok(());
         }
+
+        // If source or target is ignored, do nothing
+        if self.ignore_matcher.is_match(&source) || self.ignore_matcher.is_match(&target) {
+            tracing::debug!(target: "drive::commands", source = %source.display(), target = %target.display(), "Ignoring rename operation");
+            return Ok(());
+        }
+
         if !source.starts_with(&sync_path) {
             // Target is being moved into sync root - block the create event
             self.event_blocker
@@ -466,6 +479,23 @@ impl Mount {
         for (event_kind, events) in events {
             // Filter out events that were pre-registered by rename operations
             let filtered_events = self.event_blocker.filter_events(events, &event_kind);
+
+            // Filter out events that are ignored
+            let filtered_events: Vec<Event> = filtered_events
+                .into_iter()
+                .filter(|event| {
+                    let dominated_path = &event.paths[0];
+                    let is_ignored = self.ignore_matcher.is_match(dominated_path);
+                    if is_ignored {
+                        tracing::trace!(
+                            target: "drive::commands",
+                            path = %dominated_path.display(),
+                            "Ignoring event for path matching ignore pattern"
+                        );
+                    }
+                    !is_ignored
+                })
+                .collect();
 
             if filtered_events.is_empty() {
                 continue;

@@ -6,6 +6,7 @@ use crate::drive::callback::CallbackHandler;
 use crate::drive::commands::ManagerCommand;
 use crate::drive::commands::MountCommand;
 use crate::drive::event_blocker::EventBlocker;
+use crate::drive::ignore::IgnoreMatcher;
 use crate::drive::sync::group_fs_events;
 use crate::inventory::{DrivePropsUpdate, InventoryDb, TaskRecord};
 use crate::tasks::{TaskProgress, TaskQueue, TaskQueueConfig};
@@ -40,6 +41,10 @@ pub struct DriveConfig {
 
     // Windows CFAPI
     pub sync_root_id: Option<SyncRootId>,
+
+    /// List of gitignore-style patterns for files/directories to ignore during sync
+    #[serde(default)]
+    pub ignore_patterns: Vec<String>,
 
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -80,6 +85,8 @@ pub struct Mount {
     pub task_queue: Arc<TaskQueue>,
     pub id: String,
     pub event_blocker: EventBlocker,
+    /// Compiled glob matcher for ignore patterns
+    pub ignore_matcher: IgnoreMatcher,
 }
 
 impl Mount {
@@ -134,6 +141,31 @@ impl Mount {
         )
         .await;
 
+        // Parse ignore patterns from config
+        let sync_path = config.sync_path.clone();
+        let ignore_matcher = match IgnoreMatcher::new(&config.ignore_patterns, sync_path.clone()) {
+            Ok(matcher) => {
+                if !matcher.is_empty() {
+                    tracing::info!(
+                        target: "drive::mounts",
+                        id = %id,
+                        pattern_count = matcher.len(),
+                        "Loaded ignore patterns"
+                    );
+                }
+                matcher
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "drive::mounts",
+                    id = %id,
+                    error = %e,
+                    "Failed to parse ignore patterns, using empty matcher"
+                );
+                IgnoreMatcher::empty(sync_path)
+            }
+        };
+
         Self {
             config: Arc::new(RwLock::new(config)),
             connection: None,
@@ -150,6 +182,7 @@ impl Mount {
             fs_watcher: Mutex::new(None),
             sync_lock: Mutex::new(()),
             event_blocker: EventBlocker::new(),
+            ignore_matcher,
         }
     }
 
@@ -160,6 +193,39 @@ impl Mount {
     /// Get the sync path for the drive
     pub async fn get_sync_path(&self) -> PathBuf {
         self.config.read().await.sync_path.clone()
+    }
+
+    /// Get a reference to the ignore matcher
+    pub fn ignore_matcher(&self) -> &IgnoreMatcher {
+        &self.ignore_matcher
+    }
+
+    /// Check if an absolute path should be ignored based on the configured ignore patterns.
+    ///
+    /// The sync root prefix will be automatically stripped from the path before matching.
+    /// If the path is not under the sync root, it will not match any patterns.
+    ///
+    /// # Arguments
+    /// * `path` - The absolute path to check
+    ///
+    /// # Returns
+    /// `true` if the path matches any ignore pattern, `false` otherwise
+    pub fn is_ignored<P: AsRef<Path>>(&self, path: P) -> bool {
+        self.ignore_matcher.is_match(path)
+    }
+
+    /// Check if a filename should be ignored based on the configured ignore patterns.
+    ///
+    /// This is useful for quick checks on just the filename without the full path.
+    /// Note: This only matches patterns that don't contain path separators.
+    ///
+    /// # Arguments
+    /// * `filename` - The filename to check (without path)
+    ///
+    /// # Returns
+    /// `true` if the filename matches any ignore pattern, `false` otherwise
+    pub fn is_ignored_filename(&self, filename: &str) -> bool {
+        self.ignore_matcher.is_match_filename(filename)
     }
 
     pub fn task_queue(&self) -> Arc<TaskQueue> {

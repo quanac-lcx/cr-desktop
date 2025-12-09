@@ -120,11 +120,11 @@ impl CrPlaceholder {
 
         if self.local_file_info.exists {
             if !self.local_file_info.is_placeholder() {
+                let primary_entity = OsString::from(file_meta.etag.clone());
+                let blob = primary_entity.into_encoded_bytes();
                 // Upgrade to placeholder
                 let mut local_handle = OpenOptions::new()
-                    .write_access()
-                    .exclusive()
-                    .open(&self.local_path)
+                    .open_win32(&self.local_path)
                     .context("failed to open local file")?;
                 tracing::info!(
                     target: "drive::placeholder",
@@ -132,7 +132,7 @@ impl CrPlaceholder {
                     "Converting to placeholder"
                 );
                 local_handle
-                    .convert_to_placeholder(ConvertOptions::default().mark_in_sync(), None)
+                    .convert_to_placeholder(ConvertOptions::default().mark_in_sync().blob(blob), None)
                     .context("failed to convert to placeholder")?;
             }
 
@@ -145,7 +145,19 @@ impl CrPlaceholder {
                     .created(FileTime::from_unix_time(file_meta.created_at)?),
             );
 
-            if self.options & CrPlaceholderOptions::InvalidateAllRange as u32 != 0 {
+            let dehydrate_requested = self.options & CrPlaceholderOptions::InvalidateAllRange as u32 != 0;
+            let mut local_handle = if dehydrate_requested{
+                OpenOptions::new()
+                    .write_access()
+                    .exclusive()
+                    .open(&self.local_path)
+                    .context("failed to open local placeholder for dehydration")?
+            }else{
+                OpenOptions::new()
+                    .open_win32(&self.local_path)
+                    .context("failed to open local placeholder")?
+            };
+            if dehydrate_requested {
                 tracing::debug!(target: "drive::placeholder", local_path = %self.local_path.display(), "Invalidating all range");
                 upload_options = upload_options.dehydrate();
             }
@@ -153,11 +165,6 @@ impl CrPlaceholder {
                 tracing::debug!(target: "drive::placeholder", local_path = %self.local_path.display(), "Marking no children");
                 upload_options = upload_options.has_no_children();
             }
-            let mut local_handle = OpenOptions::new()
-                .write_access()
-                .exclusive()
-                .open(&self.local_path)
-                .context("failed to open local file")?;
             local_handle
                 .update(upload_options, None)
                 .context("failed to invalidate all range")?;

@@ -12,7 +12,7 @@ use cloudreve_api::{
     ApiError, Client,
     api::ExplorerApi,
     error::ErrorCode,
-    models::explorer::{CreateFileService, FileResponse, FileUpdateService},
+    models::explorer::{CreateFileService, FileResponse, FileUpdateService, file_type},
 };
 use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
@@ -378,7 +378,7 @@ impl<'a> UploadTask<'a> {
             self.local_file
                 .take()
                 .unwrap()
-                .with_mark_no_children(true)
+                .with_mark_no_children(file.file_type == file_type::FOLDER)
                 .with_remote_file(file),
         );
 
