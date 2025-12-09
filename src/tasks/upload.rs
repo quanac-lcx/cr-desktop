@@ -267,7 +267,7 @@ impl<'a> UploadTask<'a> {
             last_modified: local_file
                 .local_file_info
                 .last_modified
-                .map(|t| t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64),
+                .map(|t| t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as i64),
             overwrite: !is_new_file,
             previous_version: self
                 .inventory_meta
