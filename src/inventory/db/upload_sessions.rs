@@ -49,7 +49,6 @@ impl InventoryDb {
             .transpose()
     }
 
-
     /// Delete upload session
     pub fn delete_upload_session(&self, session_id: &str) -> Result<()> {
         let mut conn = self.connection()?;
@@ -68,7 +67,8 @@ impl InventoryDb {
 
         let mut conn = self.connection()?;
         let affected = diesel::delete(
-            upload_sessions_dsl::upload_sessions.filter(upload_sessions_dsl::local_path.eq_any(paths)),
+            upload_sessions_dsl::upload_sessions
+                .filter(upload_sessions_dsl::local_path.eq_any(paths)),
         )
         .execute(&mut conn)
         .context("Failed to batch delete upload session by path")?;
@@ -80,8 +80,7 @@ impl InventoryDb {
         let mut conn = self.connection()?;
         let now = Utc::now().timestamp();
         let deleted = diesel::delete(
-            upload_sessions_dsl::upload_sessions
-                .filter(upload_sessions_dsl::expires_at.lt(now)),
+            upload_sessions_dsl::upload_sessions.filter(upload_sessions_dsl::expires_at.lt(now)),
         )
         .execute(&mut conn)
         .context("Failed to delete expired upload sessions")?;
@@ -198,4 +197,3 @@ impl TryFrom<UploadSessionQueryRow> for crate::uploader::UploadSession {
         Ok(session)
     }
 }
-

@@ -172,7 +172,6 @@ impl Uploader {
             .upload_all(
                 &params.local_path,
                 &mut session,
-                &self.inventory,
                 progress,
                 &self.cancel_token,
             )

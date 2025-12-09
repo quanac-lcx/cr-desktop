@@ -209,7 +209,10 @@ impl UploadSession {
 
     /// Get the first upload URL (for providers that use single URL)
     pub fn upload_url(&self) -> Option<&str> {
-        self.credential.upload_urls.as_ref().and_then(|urls| urls.first().map(|s| s.as_str()))
+        self.credential
+            .upload_urls
+            .as_ref()
+            .and_then(|urls| urls.first().map(|s| s.as_str()))
     }
 
     /// Get the completion URL for multipart uploads
@@ -249,6 +252,19 @@ impl UploadSession {
             .as_ref()
             .and_then(|p| p.streaming_encryption)
             .unwrap_or(false)
+    }
+
+    /// Get chunk upload concurrency from storage policy
+    ///
+    /// Returns the configured concurrency level for concurrent chunk uploads.
+    /// Defaults to 1 (sequential uploads) if not specified.
+    pub fn chunk_concurrency(&self) -> usize {
+        self.credential
+            .storage_policy
+            .as_ref()
+            .and_then(|p| p.chunk_concurrency)
+            .map(|c| c.max(1) as usize)
+            .unwrap_or(1)
     }
 }
 
