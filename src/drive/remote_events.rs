@@ -7,7 +7,12 @@ use cloudreve_api::{
     api::explorer::FileEventsApi,
     models::explorer::{FileEvent, FileEventData, FileEventType},
 };
-use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF_SECS: u64 = 1;
@@ -116,10 +121,10 @@ impl Mount {
         loop {
             match subscription.next_event().await {
                 Ok(Some(event)) => match event {
-                    FileEvent::Event(data) => {
-                        tracing::trace!(target: "drive::remote_events", event = ?data, "Handling file event");
-                        if let Err(e) = self.handle_file_event(sync_path.clone(), data).await {
-                            tracing::error!(target: "drive::remote_events", error = ?e, "Failed to handle file event");
+                    FileEvent::Event(events) => {
+                        tracing::trace!(target: "drive::remote_events", events = ?events, "Handling file events batch");
+                        if let Err(e) = self.handle_file_events(sync_path.clone(), events).await {
+                            tracing::error!(target: "drive::remote_events", error = ?e, "Failed to handle file events");
                         }
                     }
                     FileEvent::Resumed => {
@@ -150,58 +155,168 @@ impl Mount {
         }
     }
 
-    async fn handle_file_event(&self, sync_root: PathBuf, event: FileEventData) -> Result<()> {
-        // Remote paths use Unix-style separators, convert to OS-native path
-        let relative_path: PathBuf = event
-            .from
-            .trim_start_matches('/')
-            .split('/')
-            .collect();
-        let local_from_path = sync_root.join(relative_path);
+    async fn handle_file_events(
+        &self,
+        sync_root: PathBuf,
+        events: Vec<FileEventData>,
+    ) -> Result<()> {
+        // Group events by type
+        let mut create_events: Vec<FileEventData> = Vec::new();
+        let mut modify_events: Vec<FileEventData> = Vec::new();
+        let mut rename_events: Vec<FileEventData> = Vec::new();
+        let mut delete_events: Vec<FileEventData> = Vec::new();
 
-        match event.event_type {
-            FileEventType::Create => {
-                self.sync_last_presented_parent(sync_root, local_from_path)
-                    .await
+        for event in events {
+            match event.event_type {
+                FileEventType::Create => create_events.push(event),
+                FileEventType::Modify => modify_events.push(event),
+                FileEventType::Rename => rename_events.push(event),
+                FileEventType::Delete => delete_events.push(event),
             }
-            FileEventType::Modify => Ok(()),
-            FileEventType::Rename => Ok(()),
-            FileEventType::Delete => Ok(()),
         }
+
+        // Handle Create events grouped by parent
+        if !create_events.is_empty() {
+            self.handle_create_events(sync_root.clone(), create_events)
+                .await?;
+        }
+
+        // Handle other event types (currently no-op, but structured for future expansion)
+        // Modify, Rename, Delete events can be handled here when needed
+
+        Ok(())
+    }
+
+    async fn handle_create_events(
+        &self,
+        sync_root: PathBuf,
+        events: Vec<FileEventData>,
+    ) -> Result<()> {
+        // Group create events by parent of `from` path
+        let mut grouped_by_parent: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+
+        for event in events {
+            // Remote paths use Unix-style separators, convert to OS-native path
+            let relative_path: PathBuf = event.from.trim_start_matches('/').split('/').collect();
+            let local_from_path = sync_root.join(&relative_path);
+
+            if let Some(parent) = local_from_path.parent() {
+                grouped_by_parent
+                    .entry(parent.to_path_buf())
+                    .or_default()
+                    .push(local_from_path);
+            }
+        }
+
+        // Process each group
+        for (parent, paths) in grouped_by_parent {
+            if let Err(e) = self
+                .sync_last_presented_parent(sync_root.clone(), parent, paths)
+                .await
+            {
+                tracing::error!(
+                    target: "drive::remote_events",
+                    error = ?e,
+                    "Failed to sync parent for create events"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     async fn sync_last_presented_parent(
         &self,
         sync_root: PathBuf,
-        local_path: PathBuf,
+        initial_parent: PathBuf,
+        local_paths: Vec<PathBuf>,
     ) -> Result<()> {
-        let mut current_parent: Option<&Path> = None;
-        let mut current = local_path.as_path();
+        // Walk up from initial_parent to find the first existing & populated parent
+        let mut current_path = initial_parent.clone();
+        let mut child_of_existing: Option<PathBuf> = None;
+
         loop {
-            current_parent = current.parent();
-            if current_parent.is_none() || sync_root.parent() == current_parent {
-                tracing::warn!(target: "drive::remote_events",sync_root=%sync_root.display(), local_path=%local_path.display(), "File event is not under sync root, skipping");
+            // Check if we've gone above the sync root
+            if !current_path.starts_with(&sync_root)
+                || current_path == sync_root.parent().unwrap_or(Path::new(""))
+            {
+                tracing::warn!(
+                    target: "drive::remote_events",
+                    sync_root = %sync_root.display(),
+                    initial_parent = %initial_parent.display(),
+                    "File event parent is not under sync root, skipping"
+                );
                 return Ok(());
             }
 
-            let parent_info = LocalFileInfo::from_path(current_parent.unwrap())
-                .context("failed to get parent file info")?;
-            if parent_info.exists {
-                if !parent_info.is_placeholder() || parent_info.is_folder_populated() {
-                    tracing::trace!(target: "drive::remote_events", parent_path=%current_parent.unwrap().display(), "Syncing parent path for new event");
+            let path_info = LocalFileInfo::from_path(&current_path)
+                .context("failed to get path file info")?;
+
+            if path_info.exists {
+                if !path_info.is_placeholder() || path_info.is_folder_populated() {
+                    // Found an existing & populated parent, sync from here
+                    let (mode, sync_paths) = if let Some(child_path) = child_of_existing {
+                        // We walked up, so sync the intermediate child folder
+                        tracing::trace!(
+                            target: "drive::remote_events",
+                            existing_parent = %current_path.display(),
+                            child_path = %child_path.display(),
+                            "Syncing intermediate child path with PathOnly"
+                        );
+                        (SyncMode::PathOnly, vec![child_path])
+                    } else if local_paths.len() > 1 {
+                        // Multiple paths in same parent - sync parent with first layer
+                        tracing::trace!(
+                            target: "drive::remote_events",
+                            parent_path = %current_path.display(),
+                            path_count = local_paths.len(),
+                            "Syncing parent path with PathAndFirstLayer for multiple new events"
+                        );
+                        (SyncMode::PathAndFirstLayer, vec![current_path.clone()])
+                    } else {
+                        // Single path - sync only that path
+                        tracing::trace!(
+                            target: "drive::remote_events",
+                            parent_path = %current_path.display(),
+                            "Syncing single path for new event"
+                        );
+                        (SyncMode::PathOnly, local_paths.clone())
+                    };
+
                     self.command_tx
                         .send(MountCommand::Sync {
-                            local_paths: vec![current.to_path_buf()],
-                            mode: SyncMode::PathOnly,
+                            local_paths: sync_paths,
+                            mode,
                         })
                         .context("failed to send sync command")?;
+                    return Ok(());
                 } else {
-                    tracing::trace!(target: "drive::remote_events", parent_path=%current_parent.unwrap().display(), "Parent path is a placeholder and not populated, skipping");
+                    tracing::trace!(
+                        target: "drive::remote_events",
+                        parent_path = %current_path.display(),
+                        "Parent path is a placeholder and not populated, skipping"
+                    );
+                    return Ok(());
                 }
-                return Ok(());
             }
-            
-            current = current_parent.unwrap();
+
+            // Current path doesn't exist, walk up to its parent
+            // Remember current_path as the child that will need syncing
+            child_of_existing = Some(current_path.clone());
+
+            match current_path.parent() {
+                Some(parent) => {
+                    current_path = parent.to_path_buf();
+                }
+                None => {
+                    tracing::warn!(
+                        target: "drive::remote_events",
+                        sync_root = %sync_root.display(),
+                        "Reached filesystem root without finding existing parent"
+                    );
+                    return Ok(());
+                }
+            }
         }
     }
 }

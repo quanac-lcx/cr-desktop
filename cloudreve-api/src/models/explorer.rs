@@ -563,6 +563,6 @@ pub enum FileEvent {
     KeepAlive,
     /// Reconnect required
     ReconnectRequired,
-    /// Actual file event with data
-    Event(FileEventData),
+    /// Batch of file events with data
+    Event(Vec<FileEventData>),
 }

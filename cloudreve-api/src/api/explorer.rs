@@ -751,9 +751,17 @@ impl FileEventSubscription {
                         // This shouldn't happen for "event" type, but handle gracefully
                         return Ok(None);
                     }
-                    // Parse the JSON data
+                    // Try to parse as array first (batch of events)
+                    if let Ok(event_data_list) = serde_json::from_str::<Vec<FileEventData>>(data_str)
+                    {
+                        if event_data_list.is_empty() {
+                            return Ok(None);
+                        }
+                        return Ok(Some(FileEvent::Event(event_data_list)));
+                    }
+                    // Fall back to parsing as single event for backwards compatibility
                     let event_data: FileEventData = serde_json::from_str(data_str)?;
-                    Ok(Some(FileEvent::Event(event_data)))
+                    Ok(Some(FileEvent::Event(vec![event_data])))
                 } else {
                     Ok(None)
                 }
