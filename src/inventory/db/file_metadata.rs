@@ -96,29 +96,31 @@ impl InventoryDb {
             return Ok(false);
         }
 
-        let mut conn = self.connection()?;
-        let affected = (&mut *conn)
-            .transaction::<i64, diesel::result::Error, _>(|tx_conn| {
-                let mut total: i64 = 0;
-                for path in &paths {
-                    total += diesel::delete(
-                        file_metadata_dsl::file_metadata
-                            .filter(file_metadata_dsl::local_path.eq(path)),
-                    )
-                    .execute(tx_conn)? as i64;
+        let affected = {
+            let mut conn = self.connection()?;
+            (&mut *conn)
+                .transaction::<i64, diesel::result::Error, _>(|tx_conn| {
+                    let mut total: i64 = 0;
+                    for path in &paths {
+                        total += diesel::delete(
+                            file_metadata_dsl::file_metadata
+                                .filter(file_metadata_dsl::local_path.eq(path)),
+                        )
+                        .execute(tx_conn)? as i64;
 
-                    let prefix = format!("{}/%", path);
-                    total += diesel::delete(
-                        file_metadata_dsl::file_metadata
-                            .filter(file_metadata_dsl::local_path.like(&prefix)),
-                    )
-                    .execute(tx_conn)? as i64;
-                }
-                Ok(total)
-            })
-            .context("Failed to batch delete inventory metadata")?;
+                        let prefix = format!("{}/%", path);
+                        total += diesel::delete(
+                            file_metadata_dsl::file_metadata
+                                .filter(file_metadata_dsl::local_path.like(&prefix)),
+                        )
+                        .execute(tx_conn)? as i64;
+                    }
+                    Ok(total)
+                })
+                .context("Failed to batch delete inventory metadata")?
+        }; // conn is dropped here, releasing it back to the pool
 
-        // Delete upload sessions
+        // Delete upload sessions - now safe to acquire a new connection
         self.batch_delete_upload_session_by_path(&paths)?;
         Ok(affected > 0)
     }

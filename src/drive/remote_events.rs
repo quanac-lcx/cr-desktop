@@ -151,7 +151,13 @@ impl Mount {
     }
 
     async fn handle_file_event(&self, sync_root: PathBuf, event: FileEventData) -> Result<()> {
-        let local_from_path = sync_root.join(PathBuf::from(event.from).strip_prefix("/")?);
+        // Remote paths use Unix-style separators, convert to OS-native path
+        let relative_path: PathBuf = event
+            .from
+            .trim_start_matches('/')
+            .split('/')
+            .collect();
+        let local_from_path = sync_root.join(relative_path);
 
         match event.event_type {
             FileEventType::Create => {
