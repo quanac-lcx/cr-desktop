@@ -561,6 +561,8 @@ pub enum FileEvent {
     Subscribed,
     /// Keep-alive ping
     KeepAlive,
+    /// Reconnect required
+    ReconnectRequired,
     /// Actual file event with data
     Event(FileEventData),
 }
