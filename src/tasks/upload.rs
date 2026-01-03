@@ -1,5 +1,6 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc, time::SystemTime};
 
+use crate::utils::toast::send_toast;
 use crate::{
     drive::{placeholder::CrPlaceholder, utils::local_path_to_cr_uri},
     inventory::{FileMetadata, InventoryDb},
@@ -16,7 +17,7 @@ use cloudreve_api::{
 };
 use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::types::TaskProgress;
@@ -346,6 +347,9 @@ impl<'a> UploadTask<'a> {
         )
         .context("failed to convert local path to cloudreve uri")?
         .to_string();
+
+        debug!(target: "tasks::upload", task_id = %self.task.task_id, local_path = %self.task.payload.local_path_display(), uri = %uri, "Send test toast");
+        send_toast();
 
         // Create file in remote
         let res = self

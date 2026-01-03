@@ -33,7 +33,7 @@
     <Resource Language="en-US"/>
   </Resources>
 <Applications>
-      <Application Id="App"
+      <Application Id="Cloudreve.Sync"
       Executable="cloudreve-sync.exe"
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
