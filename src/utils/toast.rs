@@ -33,11 +33,11 @@ pub fn send_conflict_toast(drive_id: &str, path: &PathBuf, inventory_id: i64) {
                 t!("selectAction").as_ref(),
                 t!("selectAction").as_ref(),
                 vec![
-                    Selection::new("keep_local", t!("acceptIncomming").as_ref()),
+                    Selection::new("keep_remote", t!("acceptIncomming").as_ref()),
                     Selection::new("overwrite_remote", t!("overwriteRemote").as_ref()),
                     Selection::new("save_as_new", t!("saveAsNew").as_ref()),
                 ],
-                "keep_local",
+                "keep_remote",
             )),
             Box::new(
                 ActionButton::create(t!("resolveWithAction").as_ref())

@@ -32,6 +32,7 @@ use notify_debouncer_full::notify::{
     Event, EventKind,
     event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
 };
+use uuid::Uuid;
 use std::{
     collections::HashMap,
     ops::Range,
@@ -124,7 +125,7 @@ pub enum ManagerCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictAction {
-    KeepLocal,
+    KeepRemote,
     OverwriteRemote,
     SaveAsNew,
 }
@@ -132,7 +133,7 @@ pub enum ConflictAction {
 impl ConflictAction {
     pub fn from_str(action: &str) -> Option<Self> {
         match action {
-            "keep_local" => Some(Self::KeepLocal),
+            "keep_remote" => Some(Self::KeepRemote),
             "overwrite_remote" => Some(Self::OverwriteRemote),
             "save_as_new" => Some(Self::SaveAsNew),
             _ => None,
@@ -586,9 +587,26 @@ impl Mount {
             return Err(anyhow::anyhow!("file is not conflicted"));
         }
 
+        let (sync_root, drive_id) = {
+            let config = self.config.read().await;
+            (config.sync_path.clone(), Uuid::parse_str(&config.id).context("invalid drive ID")?)
+        };
+
         match action {
-            ConflictAction::KeepLocal => {
-                // file_meta.conflict_state = Some(ConflictState::KeepLocal);
+            ConflictAction::KeepRemote => {
+                // Delete local file and trigger sync on origin path
+                let cr_placeholder =
+                    CrPlaceholder::new(local_path.clone(), sync_root.clone(), drive_id.clone());
+                cr_placeholder.delete_placeholder(self.inventory.clone()).context("failed to delete local placeholder")?;
+                self.event_blocker
+                    .register_once(&EventKind::Remove(RemoveKind::Any), local_path.clone().into());
+                let command = MountCommand::Sync {
+                    local_paths: vec![local_path.clone().into()],
+                    mode: SyncMode::PathOnly,
+                };
+                if let Err(e) = self.command_tx.send(command) {
+                    tracing::error!(target: "drive::commands", error = %e, "Failed to send Sync command");
+                }
             }
             ConflictAction::OverwriteRemote => {
                 if file_id > 0 {

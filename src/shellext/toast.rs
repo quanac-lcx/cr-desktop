@@ -108,7 +108,7 @@ impl ToastActivator {
             );
 
             let conflict_action =
-                ConflictAction::from_str(&first_input.value).unwrap_or(ConflictAction::KeepLocal);
+                ConflictAction::from_str(&first_input.value).unwrap_or(ConflictAction::KeepRemote);
             let command_tx = self.drive_manager.get_command_sender();
             if let Err(e) = command_tx.send(ManagerCommand::ResolveConflict {
                 drive_id: params.get("drive_id").unwrap_or(&String::new()).to_string(),
