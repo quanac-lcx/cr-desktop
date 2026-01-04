@@ -1,4 +1,3 @@
-mod api;
 mod cfapi;
 mod drive;
 mod events;
@@ -11,7 +10,6 @@ mod utils;
 
 use crate::utils::app::init_app_root;
 use anyhow::{Context, Result};
-use api::{AppState, create_router};
 use drive::manager::DriveManager;
 use events::EventBroadcaster;
 use logging::LogConfig;
@@ -19,7 +17,6 @@ use rust_i18n::set_locale;
 use std::sync::Arc;
 use sys_locale::get_locale;
 use tokio::signal;
-use tower_http::trace::TraceLayer;
 
 #[macro_use]
 extern crate rust_i18n;
@@ -72,36 +69,11 @@ async fn main() -> Result<()> {
         tracing::info!(target: "main", "Context menu handler initialized successfully!\n");
     }
 
-    // Create application state
-    let state = AppState {
-        drive_manager: drive_manager.clone(),
-        event_broadcaster: event_broadcaster.clone(),
-    };
-
-    // Create router with middleware
-    let app = create_router(state).layer(TraceLayer::new_for_http());
-
-    // Bind to address
-    let addr = "0.0.0.0:3000";
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .context(format!("Failed to bind to {}", addr))?;
-
-    tracing::info!(target: "main", "🌐 HTTP server listening on http://{}", addr);
-    tracing::info!(target: "main", "📡 SSE endpoint available at http://{}/api/events", addr);
-    tracing::info!(target: "main", "🔍 Health check available at http://{}/health", addr);
-
     // Broadcast initial connection status
     event_broadcaster.connection_status_changed(true);
 
-    // Serve with graceful shutdown
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(
-            drive_manager.clone(),
-            event_broadcaster.clone(),
-        ))
-        .await
-        .context("Server error")?;
+    // Wait for graceful shutdown signal
+    shutdown_signal(drive_manager, event_broadcaster).await;
 
     tracing::info!(target: "main", "👋 Server shutdown complete");
 

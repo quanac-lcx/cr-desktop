@@ -8,7 +8,7 @@ use win32_notif::{
 
 const APP_NAME: &str = "Cloudreve.Sync";
 
-pub fn send_conflict_toast(file_name: &str, inventory_id: i64) {
+pub fn send_conflict_toast(drive_id: &str, file_name: &str, inventory_id: i64) {
     let notifier = ToastsNotifier::new(APP_NAME).unwrap();
 
     let notif = NotificationBuilder::new()
@@ -38,7 +38,10 @@ pub fn send_conflict_toast(file_name: &str, inventory_id: i64) {
             )),
             Box::new(
                 ActionButton::create(t!("resolveWithAction").as_ref())
-                    .with_id(&format!("action=resolve&file_id={}", inventory_id))
+                    .with_id(&format!(
+                        "action=resolve&drive_id={}&file_id={}",
+                        drive_id, inventory_id
+                    ))
                     .with_tooltip(t!("resolveTooltip").as_ref()),
             ),
             Box::new(ActionButton::create(t!("dismiss").as_ref()).with_id("action=dismiss")),

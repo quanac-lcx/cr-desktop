@@ -1,3 +1,4 @@
+use crate::drive::commands::{ConflictAction, ManagerCommand};
 use crate::drive::manager::DriveManager;
 use crate::inventory::InventoryDb;
 use crate::utils::app::{AppRoot, get_app_root};
@@ -105,23 +106,20 @@ impl ToastActivator {
                 "Handling resolve action"
             );
 
-            match first_input.value.as_str() {
-                "keep_local" => {
-                    tracing::info!("User chose to keep local version");
-                    // TODO: Implement keep local logic
-                    // self.inventory.resolve_conflict_keep_local(...)
-                }
-                "overwrite_remote" => {
-                    tracing::info!("User chose to overwrite remote version");
-                    // TODO: Implement overwrite remote logic
-                    // self.inventory.resolve_conflict_overwrite_remote(...)
-                }
-                other => {
-                    tracing::warn!(selection = %other, "Unknown selection value for resolve action");
-                }
+            let conflict_action =
+                ConflictAction::from_str(&first_input.value).unwrap_or(ConflictAction::KeepLocal);
+            let command_tx = self.drive_manager.get_command_sender();
+            if let Err(e) = command_tx.send(ManagerCommand::ResolveConflict {
+                drive_id: params.get("drive_id").unwrap_or(&String::new()).to_string(),
+                file_id: params
+                    .get("file_id")
+                    .unwrap_or(&String::new())
+                    .parse::<i64>()
+                    .unwrap_or(0),
+                action: conflict_action,
+            }) {
+                tracing::error!(error = ?e, "Failed to send ResolveConflict command");
             }
-        } else {
-            tracing::warn!("Resolve action triggered but no input data provided");
         }
     }
 

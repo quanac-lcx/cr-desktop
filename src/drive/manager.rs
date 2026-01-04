@@ -231,10 +231,9 @@ impl DriveManager {
     }
 
     /// Get a drive by ID
-    pub async fn get_drive(&self, _id: &str) -> Option<DriveConfig> {
-        //let read_guard = self.drives.read().await;
-        // read_guard.get(id).map(async|mount| mount.get_config().await)
-        None
+    pub async fn get_drive(&self, id: &str) -> Option<Arc<Mount>> {
+        let read_guard = self.drives.read().await;
+        read_guard.get(id).cloned()
     }
 
     /// List all drives
@@ -371,6 +370,23 @@ impl DriveManager {
 
                         let _ = response
                             .send(Err(anyhow::anyhow!("No drive found for path: {:?}", path)));
+                    });
+                }
+                ManagerCommand::ResolveConflict {
+                    drive_id,
+                    file_id,
+                    action,
+                } => {
+                    spawn(async move {
+                        let drive = manager.get_drive(&drive_id).await;
+                        if let Some(drive) = drive {
+                            let result = drive.resolve_conflict(action, file_id).await;
+                            if let Err(e) = result {
+                                tracing::error!(target: "drive::manager", error = %e, "Failed to resolve conflict");
+                            }
+                        } else {
+                            tracing::error!(target: "drive::manager", "No drive found for drive_id: {:?}", drive_id);
+                        }
                     });
                 }
             }

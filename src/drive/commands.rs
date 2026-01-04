@@ -6,9 +6,11 @@ use crate::{
     },
     drive::{
         mounts::Mount,
+        placeholder::CrPlaceholder,
         sync::{GroupedFsEvents, SyncMode},
         utils::{local_path_to_cr_uri, notify_shell_change},
     },
+    inventory::ConflictState,
     tasks::TaskPayload,
 };
 use anyhow::{Context, Result};
@@ -111,6 +113,29 @@ pub enum ManagerCommand {
         paths: Vec<PathBuf>,
         mode: SyncMode,
     },
+    ResolveConflict {
+        drive_id: String,
+        file_id: i64,
+        action: ConflictAction,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictAction {
+    KeepLocal,
+    OverwriteRemote,
+    SaveAsNew,
+}
+
+impl ConflictAction {
+    pub fn from_str(action: &str) -> Option<Self> {
+        match action {
+            "keep_local" => Some(Self::KeepLocal),
+            "overwrite_remote" => Some(Self::OverwriteRemote),
+            "save_as_new" => Some(Self::SaveAsNew),
+            _ => None,
+        }
+    }
 }
 
 impl Mount {
@@ -534,6 +559,59 @@ impl Mount {
                 _ => (),
             }
         }
+        Ok(())
+    }
+
+    pub async fn resolve_conflict(&self, action: ConflictAction, file_id: i64) -> Result<()> {
+        let file_meta = self
+            .inventory
+            .query_by_id(file_id)
+            .context("failed to query metadata by id")?
+            .ok_or_else(|| anyhow::anyhow!("file metadata not found for id {}", file_id))?;
+
+        if file_meta.conflict_state.is_none() {
+            return Err(anyhow::anyhow!("file is not conflicted"));
+        }
+
+        match action {
+            ConflictAction::KeepLocal => {
+                // file_meta.conflict_state = Some(ConflictState::KeepLocal);
+            }
+            ConflictAction::OverwriteRemote => {
+                if file_meta.conflict_state.unwrap() != ConflictState::Pending {
+                    return Err(anyhow::anyhow!("file is not pending conflict resolution"));
+                }
+
+                // Update conflict state with overwrite and trigger upload
+                self.inventory
+                    .mark_as_conflicted(&file_meta.local_path, Some(ConflictState::Override))
+                    .context("failed to mark file as conflicted")?;
+
+                tracing::info!(
+                    target: "drive::sync",
+                    id = %self.id,
+                    path = %file_meta.local_path,
+                    "Queueing upload task"
+                );
+
+                if let Err(err) = self
+                    .task_queue
+                    .enqueue(TaskPayload::upload(file_meta.local_path.clone()))
+                    .await
+                {
+                    tracing::error!(
+                        target: "drive::sync",
+                        id = %self.id,
+                        path = %file_meta.local_path,
+                        error = ?err,
+                        "Failed to enqueue upload task"
+                    );
+                    return Err(err.into());
+                }
+            }
+            ConflictAction::SaveAsNew => {}
+        }
+
         Ok(())
     }
 

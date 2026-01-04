@@ -90,6 +90,18 @@ impl InventoryDb {
         row.map(FileMetadata::try_from).transpose()
     }
 
+    /// Query file metadata by id
+    pub fn query_by_id(&self, id: i64) -> Result<Option<FileMetadata>> {
+        let mut conn = self.connection()?;
+        let row = file_metadata_dsl::file_metadata
+            .filter(file_metadata_dsl::id.eq(id))
+            .first::<FileMetadataRow>(&mut conn)
+            .optional()
+            .context("Failed to query inventory metadata by id")?;
+
+        row.map(FileMetadata::try_from).transpose()
+    }
+
     /// Batch delete file metadata by local path
     pub fn batch_delete_by_path(&self, paths: Vec<&str>) -> Result<bool> {
         if paths.is_empty() {

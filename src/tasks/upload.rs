@@ -203,6 +203,7 @@ impl<'a> UploadTask<'a> {
 
                     // Send conflict toast
                     send_conflict_toast(
+                        self.drive_id,
                         self.task
                             .payload
                             .local_path

@@ -18,8 +18,8 @@ syncNow:
   en-US: "Sync now"
   zh-CN: "立即同步"
 conflictToastTitle:
-  en-US: "Local change conflicted with remote, select an action to resolve"
-  zh-CN: "本地变更与远程冲突，选择一个操作来解决"
+  en-US: "Local change conflicted with remote for the following file:"
+  zh-CN: "本地变更与远程冲突，针对以下文件："
 acceptIncomming:
   en-US: "Discard local change"
   zh-CN: "放弃本地变更"
@@ -36,8 +36,8 @@ dismiss:
   en-US: "Dismiss"
   zh-CN: "忽略"
 selectAction:
-  en-US: "Select an action"
-  zh-CN: "选择一个操作"
+  en-US: "Select an action to resolve the conflict"
+  zh-CN: "选择一个操作来解决冲突"
 resolveTooltip:
   en-US: "Resolve the selected action"
   zh-CN: "执行选定的操作"
