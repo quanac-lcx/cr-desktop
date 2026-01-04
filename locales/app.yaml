@@ -17,3 +17,27 @@ syncSelectedNow:
 syncNow:
   en-US: "Sync now"
   zh-CN: "立即同步"
+conflictToastTitle:
+  en-US: "Local change conflicted with remote, select an action to resolve"
+  zh-CN: "本地变更与远程冲突，选择一个操作来解决"
+acceptIncomming:
+  en-US: "Discard local change"
+  zh-CN: "放弃本地变更"
+overwriteRemote:
+  en-US: "Overwrite remote"
+  zh-CN: "覆盖远程变更"
+saveAsNew:
+  en-US: "Save as new"
+  zh-CN: "保存为新文件"
+resolveWithAction:
+  en-US: "Resolve with action"
+  zh-CN: "执行"
+dismiss:
+  en-US: "Dismiss"
+  zh-CN: "忽略"
+selectAction:
+  en-US: "Select an action"
+  zh-CN: "选择一个操作"
+resolveTooltip:
+  en-US: "Resolve the selected action"
+  zh-CN: "执行选定的操作"

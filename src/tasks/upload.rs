@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc, time::SystemTime};
 
-use crate::utils::toast::send_toast;
+use crate::utils::toast::send_conflict_toast;
 use crate::{
     drive::{placeholder::CrPlaceholder, utils::local_path_to_cr_uri},
     inventory::{ConflictState, FileMetadata, InventoryDb},
@@ -200,6 +200,21 @@ impl<'a> UploadTask<'a> {
                             "Failed to mark file as conflicted"
                         );
                     }
+
+                    // Send conflict toast
+                    send_conflict_toast(
+                        self.task
+                            .payload
+                            .local_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default(),
+                        self.inventory_meta
+                            .as_ref()
+                            .map(|meta| meta.id)
+                            .unwrap_or(0),
+                    )
                 }
 
                 // Mark file as error state
@@ -371,7 +386,6 @@ impl<'a> UploadTask<'a> {
         .to_string();
 
         debug!(target: "tasks::upload", task_id = %self.task.task_id, local_path = %self.task.payload.local_path_display(), uri = %uri, "Send test toast");
-        send_toast();
 
         // Create file in remote
         let res = self

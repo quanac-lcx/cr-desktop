@@ -1,32 +1,47 @@
 use win32_notif::{
     NotificationBuilder, ToastsNotifier,
-    notification::{actions::{ActionButton, Input, action::ActivationType, input::Selection}, visual::{Image, Placement, Text, text::HintStyle}},
+    notification::{
+        actions::{ActionButton, Input, input::Selection},
+        visual::{Text, text::HintStyle},
+    },
 };
 
-pub fn send_toast() {
-    let notifier = ToastsNotifier::new("Cloudreve.Sync").unwrap();
+const APP_NAME: &str = "Cloudreve.Sync";
+
+pub fn send_conflict_toast(file_name: &str, inventory_id: i64) {
+    let notifier = ToastsNotifier::new(APP_NAME).unwrap();
 
     let notif = NotificationBuilder::new()
-        .visual(Image::create(0,"https://unsplash.it/64?image=669").with_placement(Placement::AppLogoOverride))
         .visual(
-            Text::create(1, "Local change conflicted with remote")
+            Text::create(1, t!("conflictToastTitle").as_ref())
                 .with_align_center(true)
                 .with_wrap(true)
                 .with_style(HintStyle::Title),
         )
         .visual(
-            Text::create(2, "SomeFile.docx")
+            Text::create(2, file_name)
                 .with_align_center(true)
                 .with_wrap(true)
                 .with_style(HintStyle::Body),
         )
         .actions(vec![
-            Box::new(Input::create_selection_input("selection", "Select an action", "Select an action", vec![
-                Selection::new("keep_local", "Keep local"),
-                Selection::new("overwrite_remote", "Overwrite remote"),
-            ])),
-            Box::new(ActionButton::create("Resolve").with_id("resolve").with_tooltip("Resolve the selected action")),
-            Box::new(ActionButton::create("Dismiss").with_id("action=dismiss")),
+            Box::new(Input::create_selection_input(
+                "selection",
+                t!("selectAction").as_ref(),
+                t!("selectAction").as_ref(),
+                vec![
+                    Selection::new("keep_local", t!("acceptIncomming").as_ref()),
+                    Selection::new("overwrite_remote", t!("overwriteRemote").as_ref()),
+                    Selection::new("save_as_new", t!("saveAsNew").as_ref()),
+                ],
+                "keep_local",
+            )),
+            Box::new(
+                ActionButton::create(t!("resolveWithAction").as_ref())
+                    .with_id(&format!("action=resolve&file_id={}", inventory_id))
+                    .with_tooltip(t!("resolveTooltip").as_ref()),
+            ),
+            Box::new(ActionButton::create(t!("dismiss").as_ref()).with_id("action=dismiss")),
         ])
         .build(0, &notifier, "01", "readme")
         .unwrap();
