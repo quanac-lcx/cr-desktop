@@ -5,7 +5,7 @@ use crate::{
         placeholder_file::PlaceholderFile,
     },
     drive::utils::notify_shell_change,
-    inventory::{FileMetadata, InventoryDb, MetadataEntry},
+    inventory::{ConflictState, FileMetadata, InventoryDb, MetadataEntry},
 };
 use anyhow::{Context, Result};
 use chrono::DateTime;

@@ -9,7 +9,7 @@ use crate::{
         placeholder::CrPlaceholder,
         utils::{local_path_to_cr_uri, remote_path_to_local_relative_path},
     },
-    inventory::{FileMetadata, MetadataEntry},
+    inventory::{ConflictState, FileMetadata, MetadataEntry},
     tasks::TaskPayload,
 };
 use anyhow::{Context, Result};
@@ -1084,11 +1084,13 @@ impl Mount {
         plan: &mut SyncPlan,
     ) {
         if !local.is_placeholder() || !local.in_sync() {
-            // TODO: if Search upload queue and found no tasks:
-            plan.actions.push(SyncAction::QueueUpload {
-                path: path.clone(),
-                reason: UploadReason::RemoteMismatch,
-            });
+            let conflicting = inventory.is_some_and(|inv| inv.conflict_state == Some(ConflictState::Pending));
+            if !conflicting {
+                plan.actions.push(SyncAction::QueueUpload {
+                    path: path.clone(),
+                    reason: UploadReason::RemoteMismatch,
+                });
+            }
             return;
         }
 

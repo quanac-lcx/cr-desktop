@@ -263,7 +263,10 @@ struct FileMetadataChangeset {
     permissions: String,
     shared: bool,
     size: i64,
-    conflict_state: Option<String>,
+    /// Use Option<Option<String>> so that:
+    /// - Some(None) explicitly sets conflict_state to NULL
+    /// - Some(Some(value)) sets it to a value
+    conflict_state: Option<Option<String>>,
 }
 
 impl TryFrom<FileMetadataRow> for FileMetadata {
@@ -346,7 +349,8 @@ impl FileMetadataChangeset {
             permissions: entry.permissions.clone(),
             shared: entry.shared,
             size: entry.size,
-            conflict_state: entry.conflict_state.map(|s| s.as_str().to_string()),
+            // Use Some(...) to always update the column, even when clearing to NULL
+            conflict_state: Some(entry.conflict_state.map(|s| s.as_str().to_string())),
         })
     }
 }
