@@ -1,4 +1,5 @@
 use crate::inventory::{InventoryDb, NewTaskRecord, TaskRecord, TaskStatus, TaskUpdate};
+use crate::tasks::download::DownloadTask;
 use crate::tasks::types::{TaskKind, TaskPayload, TaskProgress};
 use crate::tasks::upload::UploadTask;
 use anyhow::{Context, Result, anyhow};
@@ -512,7 +513,19 @@ impl TaskQueue {
 
                 task_executor.execute().await?;
             }
-            TaskKind::Download => todo!(),
+            TaskKind::Download => {
+                let mut task_executor = DownloadTask::new(
+                    self.inventory.clone(),
+                    self.cr_client.clone(),
+                    self.drive_id.as_str(),
+                    &task,
+                    self.sync_path.clone(),
+                    self.remote_base.clone(),
+                    Arc::clone(&self.progress),
+                );
+
+                task_executor.execute().await?;
+            }
         }
 
         // for step in 0..PLACEHOLDER_STEPS {

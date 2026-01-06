@@ -1,3 +1,4 @@
+mod download;
 mod queue;
 mod types;
 mod upload;
