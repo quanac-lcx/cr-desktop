@@ -83,6 +83,11 @@ impl CrPlaceholder {
         self
     }
 
+    pub fn with_file_meta(mut self, file_meta: FileMetadata) -> Self {
+        self.file_meta = Some(file_meta);
+        self
+    }
+
     pub fn delete_placeholder(&self, inventory: Arc<InventoryDb>) -> Result<()> {
         // Delete local file/folder if it exists
         if self.local_file_info.exists {

@@ -4,28 +4,31 @@
 //! - Downloads file content from remote server to a temporary location
 //! - Tracks download progress with speed and ETA calculation
 //! - Replaces the placeholder file content atomically when finished
+//! - Uses CrPlaceholder to convert and mark the file as in-sync
 //! - Only operates on hydrated placeholder files
 
 use std::{
     path::PathBuf,
+    str::FromStr,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
-use cloudreve_api::{api::ExplorerApi, models::explorer::FileURLService, Client};
+use cloudreve_api::{Client, api::ExplorerApi, models::explorer::FileURLService};
 use dashmap::DashMap;
 use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::{
-    cfapi::placeholder::{LocalFileInfo, OpenOptions, UpdateOptions},
-    drive::utils::local_path_to_cr_uri,
+    cfapi::placeholder::LocalFileInfo,
+    drive::{placeholder::CrPlaceholder, utils::local_path_to_cr_uri},
     inventory::{FileMetadata, InventoryDb},
     tasks::queue::QueuedTask,
 };
@@ -252,7 +255,7 @@ impl<'a> DownloadTask<'a> {
 
         self.local_file_info = Some(local_file_info);
 
-        // Get inventory metadata
+        // Get inventory metadata - required for download
         let path_str = self
             .task
             .payload
@@ -264,6 +267,14 @@ impl<'a> DownloadTask<'a> {
             .query_by_path(path_str)
             .context("failed to get inventory meta")?;
 
+        // Fail if file is not in inventory - we need the metadata to download
+        if self.inventory_meta.is_none() {
+            anyhow::bail!(
+                "File not found in inventory: {}. Cannot download without inventory metadata.",
+                path_str
+            );
+        }
+
         // Perform the download
         self.download_and_replace().await
     }
@@ -271,6 +282,10 @@ impl<'a> DownloadTask<'a> {
     /// Download file from remote and replace local placeholder content
     async fn download_and_replace(&mut self) -> Result<()> {
         let local_path = &self.task.payload.local_path;
+        let inventory_meta = self
+            .inventory_meta
+            .as_ref()
+            .expect("inventory_meta should be set");
 
         info!(
             target: "tasks::download",
@@ -288,13 +303,11 @@ impl<'a> DownloadTask<'a> {
         .context("failed to convert local path to cloudreve uri")?
         .to_string();
 
-        // Get download URL from server
+        // Get download URL from server using inventory metadata
         let mut request = FileURLService::default();
         request.uris.push(uri.clone());
-        if let Some(meta) = &self.inventory_meta {
-            if !meta.etag.is_empty() {
-                request.entity = Some(meta.etag.clone());
-            }
+        if !inventory_meta.etag.is_empty() {
+            request.entity = Some(inventory_meta.etag.clone());
         }
 
         let entity_url_res = self
@@ -317,19 +330,8 @@ impl<'a> DownloadTask<'a> {
             "Got download URL"
         );
 
-        // Get file info for size
-        let file_info = self
-            .cr_client
-            .get_file_info(&cloudreve_api::models::explorer::GetFileInfoService {
-                uri: Some(uri),
-                id: None,
-                extended: None,
-                folder_summary: None,
-            })
-            .await
-            .context("failed to get file info")?;
-
-        let file_size = file_info.size as u64;
+        // Use file size from inventory metadata
+        let file_size = inventory_meta.size as u64;
 
         // Create temp file for download
         let temp_dir = std::env::temp_dir();
@@ -359,13 +361,9 @@ impl<'a> DownloadTask<'a> {
                 let final_update = tracker.create_update();
                 reporter.on_progress(&final_update);
 
-                // Replace placeholder file with downloaded content
-                self.replace_placeholder_content(&temp_path)
-                    .await
-                    .context("failed to replace placeholder content")?;
-
-                // Update inventory with new file info
-                self.update_inventory(&file_info).await?;
+                // Replace placeholder file with downloaded content and commit
+                self.replace_and_commit_placeholder(&temp_path)
+                    .context("failed to replace and commit placeholder")?;
 
                 // Clean up temp file
                 if temp_path.exists() {
@@ -446,9 +444,13 @@ impl<'a> DownloadTask<'a> {
         Ok(())
     }
 
-    /// Replace the placeholder file content with the downloaded file
-    async fn replace_placeholder_content(&self, temp_path: &PathBuf) -> Result<()> {
+    /// Replace the placeholder file content with the downloaded file and commit using CrPlaceholder
+    fn replace_and_commit_placeholder(&mut self, temp_path: &PathBuf) -> Result<()> {
         let local_path = &self.task.payload.local_path;
+        let inventory_meta = self
+            .inventory_meta
+            .as_ref()
+            .expect("inventory_meta should be set");
 
         debug!(
             target: "tasks::download",
@@ -464,7 +466,7 @@ impl<'a> DownloadTask<'a> {
         {
             use std::ffi::OsStr;
             use std::os::windows::ffi::OsStrExt;
-            use windows::Win32::Storage::FileSystem::{ReplaceFileW, REPLACE_FILE_FLAGS};
+            use windows::Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW};
             use windows::core::PCWSTR;
 
             // Convert paths to wide strings
@@ -483,10 +485,10 @@ impl<'a> DownloadTask<'a> {
                 ReplaceFileW(
                     PCWSTR::from_raw(local_wide.as_ptr()),
                     PCWSTR::from_raw(temp_wide.as_ptr()),
-                    PCWSTR::null(), // No backup file
+                    PCWSTR::null(),        // No backup file
                     REPLACE_FILE_FLAGS(0), // No flags
-                    None,           // Reserved
-                    None,           // Reserved
+                    None,                  // Reserved
+                    None,                  // Reserved
                 )
             };
 
@@ -510,60 +512,23 @@ impl<'a> DownloadTask<'a> {
                 .context("failed to copy temp file to local path")?;
         }
 
-        // Mark the placeholder as in-sync after content replacement
-        let mut placeholder = OpenOptions::new()
-            .write_access()
-            .exclusive()
-            .open(local_path)
-            .context("failed to open placeholder for update")?;
-
-        placeholder
-            .mark_in_sync(true, None)
-            .context("failed to mark placeholder as in-sync")?;
-
-        Ok(())
-    }
-
-    /// Update inventory with new file metadata
-    async fn update_inventory(
-        &self,
-        file_info: &cloudreve_api::models::explorer::FileResponse,
-    ) -> Result<()> {
-        use crate::inventory::MetadataEntry;
-        use chrono::DateTime;
-        use std::str::FromStr;
-        use uuid::Uuid;
-
+        // Use CrPlaceholder to convert and mark as in-sync
         let drive_id = Uuid::from_str(self.drive_id).context("invalid drive ID")?;
+        // Create CrPlaceholder and commit changes
+        let mut cr_placeholder =
+            CrPlaceholder::new(local_path.clone(), self.sync_path.clone(), drive_id)
+                .with_file_meta(inventory_meta.clone());
 
-        let created_at = DateTime::parse_from_rfc3339(&file_info.created_at)
-            .ok()
-            .map(|dt| dt.timestamp())
-            .unwrap_or_default();
+        cr_placeholder
+            .commit(self.inventory.clone())
+            .context("failed to commit placeholder")?;
 
-        let updated_at = DateTime::parse_from_rfc3339(&file_info.updated_at)
-            .ok()
-            .map(|dt| dt.timestamp())
-            .unwrap_or_default();
-
-        let entry = MetadataEntry {
-            drive_id,
-            local_path: self.task.payload.local_path.to_string_lossy().to_string(),
-            is_folder: false,
-            created_at,
-            updated_at,
-            size: file_info.size,
-            etag: file_info.primary_entity.clone().unwrap_or_default(),
-            metadata: file_info.metadata.clone().unwrap_or_default(),
-            props: None,
-            permissions: file_info.permission.clone().unwrap_or_default(),
-            shared: file_info.shared.unwrap_or(false),
-            conflict_state: None,
-        };
-
-        self.inventory
-            .upsert(&entry)
-            .context("failed to update inventory")?;
+        debug!(
+            target: "tasks::download",
+            task_id = %self.task.task_id,
+            local_path = %local_path.display(),
+            "Placeholder committed successfully"
+        );
 
         Ok(())
     }
