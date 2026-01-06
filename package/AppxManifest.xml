@@ -21,8 +21,8 @@
     Version="1.0.0.0" />
 
   <Properties>
-    <DisplayName>CloudrevePackage</DisplayName>
-    <PublisherDisplayName>aaronliu</PublisherDisplayName>
+    <DisplayName>Cloudreve</DisplayName>
+    <PublisherDisplayName>Cloudreve</PublisherDisplayName>
     <Logo>Images\StoreLogo.png</Logo>
   </Properties>
 

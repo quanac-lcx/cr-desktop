@@ -1,4 +1,4 @@
-use crate::drive::commands::ManagerCommand;
+use crate::{drive::commands::ManagerCommand, utils::app::AppRoot};
 use crate::drive::manager::DriveManager;
 use crate::drive::sync::SyncMode;
 use rust_i18n::t;
@@ -12,14 +12,14 @@ use windows::{
 #[implement(IExplorerCommand)]
 pub struct SyncNowCommandHandler {
     drive_manager: Arc<DriveManager>,
-    images_path: String,
+    app_root: AppRoot,
 }
 
 impl SyncNowCommandHandler {
-    pub fn new(drive_manager: Arc<DriveManager>, images_path: String) -> Self {
+    pub fn new(drive_manager: Arc<DriveManager>, app_root: AppRoot) -> Self {
         Self {
             drive_manager,
-            images_path,
+            app_root,
         }
     }
 }
@@ -34,7 +34,7 @@ impl IExplorerCommand_Impl for SyncNowCommandHandler_Impl {
                         t!("syncNow")
                     } else {
                         t!("syncSelectedNow")
-                    }
+                    }arr
                 }
                 None => t!("syncNow"),
             }
@@ -44,7 +44,7 @@ impl IExplorerCommand_Impl for SyncNowCommandHandler_Impl {
     }
 
     fn GetIcon(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {
-        let icon_path = format!("{}\\syncNow.png", self.images_path);
+        let icon_path = format!("{}\\sync2.ico", self.app_root.image_path());
         let hstring = HSTRING::from(icon_path);
         unsafe { SHStrDupW(&hstring) }
     }

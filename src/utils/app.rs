@@ -28,4 +28,8 @@ impl AppRoot {
             dark_light::Mode::Unspecified => format!("{}\\Images\\lightTheme", self.0.as_str()),
         }
     }
+
+    pub fn image_path_general(&self) -> String {
+        format!("{}\\Images", self.0.as_str())
+    }
 }

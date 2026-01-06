@@ -1,5 +1,5 @@
 use super::{CLSID_EXPLORER_COMMAND, SubCommands, get_images_path};
-use crate::drive::manager::DriveManager;
+use crate::{drive::manager::DriveManager, utils::app::{AppRoot, get_app_root}};
 use std::sync::Arc;
 use windows::{
     Win32::{Foundation::*, System::Com::*, UI::Shell::*},
@@ -9,7 +9,7 @@ use windows::{
 #[implement(IExplorerCommand)]
 pub struct CrExplorerCommandHandler {
     drive_manager: Arc<DriveManager>,
-    images_path: String,
+    app_root: AppRoot,
 
     #[allow(dead_code)]
     site: std::sync::Mutex<Option<IUnknown>>,
@@ -19,7 +19,7 @@ impl CrExplorerCommandHandler {
     pub fn new(drive_manager: Arc<DriveManager>) -> Self {
         Self {
             drive_manager: drive_manager.clone(),
-            images_path: get_images_path().unwrap_or_default(),
+            app_root: get_app_root(),
             site: std::sync::Mutex::new(None),
         }
     }
@@ -32,7 +32,7 @@ impl IExplorerCommand_Impl for CrExplorerCommandHandler_Impl {
     }
 
     fn GetIcon(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {
-        let icon_path = format!("{}\\cloudreve_menu.png", self.images_path);
+        let icon_path = format!("{}\\cloudreve3.ico", self.app_root.image_path_general());
         let hstring = HSTRING::from(icon_path);
         unsafe { SHStrDupW(&hstring) }
     }
@@ -64,6 +64,6 @@ impl IExplorerCommand_Impl for CrExplorerCommandHandler_Impl {
 
     fn EnumSubCommands(&self) -> Result<IEnumExplorerCommand> {
         tracing::trace!(target: "shellext::context_menu", "EnumSubCommands called");
-        Ok(SubCommands::new(self.drive_manager.clone(), self.images_path.clone()).into())
+        Ok(SubCommands::new(self.drive_manager.clone(), self.app_root.clone()).into())
     }
 }

@@ -1,4 +1,4 @@
-use crate::drive::commands::ManagerCommand;
+use crate::{drive::commands::ManagerCommand, utils::app::AppRoot};
 use crate::drive::manager::DriveManager;
 use rust_i18n::t;
 use std::path::PathBuf;
@@ -11,17 +11,17 @@ use windows::{
 #[implement(IExplorerCommand)]
 pub struct ViewOnlineCommandHandler {
     drive_manager: Arc<DriveManager>,
-    images_path: String,
+    app_root: AppRoot,
 
     #[allow(dead_code)]
     site: Option<IUnknown>,
 }
 
 impl ViewOnlineCommandHandler {
-    pub fn new(drive_manager: Arc<DriveManager>, images_path: String) -> Self {
+    pub fn new(drive_manager: Arc<DriveManager>, app_root: AppRoot) -> Self {
         Self {
             drive_manager,
-            images_path,
+            app_root,
             site: None,
         }
     }
@@ -35,7 +35,7 @@ impl IExplorerCommand_Impl for ViewOnlineCommandHandler_Impl {
     }
 
     fn GetIcon(&self, _items: Option<&IShellItemArray>) -> Result<PWSTR> {
-        let icon_path = format!("{}\\viewOnline.png", self.images_path);
+        let icon_path = format!("{}\\globe7.ico", self.app_root.image_path());
         let hstring = HSTRING::from(icon_path);
         unsafe { SHStrDupW(&hstring) }
     }
