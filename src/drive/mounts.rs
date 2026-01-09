@@ -283,7 +283,7 @@ impl Mount {
             }
             sync_root_info.set_version("1.0.0");
             sync_root_info
-                .set_recycle_bin_uri("http://cloudmirror.example.com/recyclebin")
+                .set_recycle_bin_uri("https://cloudreve.org")
                 .context("failed to set recycle bin uri")?;
             sync_root_info
                 .set_path(Path::new(&config.sync_path))
