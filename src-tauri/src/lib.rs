@@ -1,7 +1,13 @@
 use anyhow::Context;
 use cloudreve_sync::{DriveManager, EventBroadcaster, LogConfig, LogGuard};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{
+    async_runtime::spawn,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager, RunEvent,
+};
+use tokio::sync::OnceCell;
 
 mod commands;
 
@@ -14,8 +20,11 @@ pub struct AppState {
     log_guard: LogGuard,
 }
 
+/// Global cell to store the app state once initialization is complete
+static APP_STATE: OnceCell<AppState> = OnceCell::const_new();
+
 /// Initialize the sync service (DriveManager, shell services, etc.)
-async fn init_sync_service() -> anyhow::Result<(Arc<DriveManager>, EventBroadcaster, LogGuard)> {
+async fn init_sync_service(app: AppHandle) -> anyhow::Result<()> {
     // Initialize i18n
     cloudreve_sync::init_i18n();
 
@@ -30,8 +39,7 @@ async fn init_sync_service() -> anyhow::Result<(Arc<DriveManager>, EventBroadcas
 
     // Initialize DriveManager
     tracing::info!(target: "main", "Initializing DriveManager...");
-    let drive_manager =
-        Arc::new(DriveManager::new().context("Failed to create DriveManager")?);
+    let drive_manager = Arc::new(DriveManager::new().context("Failed to create DriveManager")?);
 
     // Spawn command processor for DriveManager
     drive_manager.spawn_command_processor().await;
@@ -59,17 +67,45 @@ async fn init_sync_service() -> anyhow::Result<(Arc<DriveManager>, EventBroadcas
         tracing::info!(target: "main", "Shell services initialized successfully!");
     }
 
+    // Spawn event bridge to forward events to frontend
+    spawn_event_bridge(app.clone(), &event_broadcaster);
+
     // Broadcast initial connection status
     event_broadcaster.connection_status_changed(true);
 
-    Ok((drive_manager, event_broadcaster, log_guard))
+    // Store the state in the global cell
+    let state = AppState {
+        drive_manager,
+        event_broadcaster,
+        log_guard,
+    };
+
+    APP_STATE
+        .set(state)
+        .map_err(|_| anyhow::anyhow!("App state already initialized"))?;
+
+    // Store in Tauri's managed state as well for commands
+    app.manage(AppStateHandle);
+
+    tracing::info!(target: "main", "Tauri application setup complete");
+
+    Ok(())
+}
+
+/// Marker struct for Tauri state that provides access to APP_STATE
+pub struct AppStateHandle;
+
+impl AppStateHandle {
+    pub fn get(&self) -> Option<&'static AppState> {
+        APP_STATE.get()
+    }
 }
 
 /// Spawn a task that bridges EventBroadcaster to Tauri events
 fn spawn_event_bridge(app_handle: AppHandle, event_broadcaster: &EventBroadcaster) {
     let mut receiver = event_broadcaster.subscribe();
 
-    tauri::async_runtime::spawn(async move {
+    spawn(async move {
         tracing::info!(target: "events", "Event bridge started");
 
         loop {
@@ -94,57 +130,100 @@ fn spawn_event_bridge(app_handle: AppHandle, event_broadcaster: &EventBroadcaste
     });
 }
 
+/// Perform graceful shutdown
+async fn shutdown() {
+    tracing::info!(target: "main", "Initiating shutdown...");
+
+    if let Some(state) = APP_STATE.get() {
+        // Broadcast disconnection event
+        state.event_broadcaster.connection_status_changed(false);
+
+        // Shutdown drive manager
+        tracing::info!(target: "main", "Shutting down drive manager...");
+        state.drive_manager.shutdown().await;
+
+        // Persist drive state
+        tracing::info!(target: "main", "Persisting drive configurations...");
+        if let Err(e) = state.drive_manager.persist().await {
+            tracing::error!(target: "main", error = %e, "Failed to persist drive configurations");
+        } else {
+            tracing::info!(target: "main", "Drive configurations saved successfully");
+        }
+    }
+
+    tracing::info!(target: "main", "Shutdown complete");
+}
+
+/// Setup the system tray icon
+fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
+    // Create menu items
+    let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+    // Build tray icon
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // Initialize sync service in blocking context since setup isn't async
-            let (drive_manager, event_broadcaster, log_guard) =
-                tauri::async_runtime::block_on(async { init_sync_service().await })?;
+            // Setup system tray
+            setup_tray(app)?;
 
-            // Spawn event bridge to forward events to frontend
-            spawn_event_bridge(app.handle().clone(), &event_broadcaster);
-
-            // Store state in Tauri's managed state
-            app.manage(AppState {
-                drive_manager,
-                event_broadcaster,
-                log_guard,
+            // Spawn async setup task - this runs in the background
+            // while the app continues to start
+            let app_handle = app.handle().clone();
+            spawn(async move {
+                if let Err(e) = init_sync_service(app_handle).await {
+                    tracing::error!(target: "main", error = %e, "Failed to initialize sync service");
+                }
             });
 
-            tracing::info!(target: "main", "Tauri application setup complete");
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Handle window close to persist configuration
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                tracing::info!(target: "main", "Window close requested, initiating shutdown...");
-
-                let app_handle = window.app_handle();
-                let state: State<AppState> = app_handle.state();
-
-                // Persist drive configurations
-                let drive_manager = state.drive_manager.clone();
-                let event_broadcaster = state.event_broadcaster.clone();
-
-                tauri::async_runtime::block_on(async {
-                    // Broadcast disconnection event
-                    event_broadcaster.connection_status_changed(false);
-
-                    // Shutdown drive manager
-                    tracing::info!(target: "main", "Shutting down drive manager...");
-                    drive_manager.shutdown().await;
-
-                    // Persist drive state
-                    tracing::info!(target: "main", "Persisting drive configurations...");
-                    if let Err(e) = drive_manager.persist().await {
-                        tracing::error!(target: "main", error = %e, "Failed to persist drive configurations");
-                    } else {
-                        tracing::info!(target: "main", "Drive configurations saved successfully");
-                    }
-                });
-
-                tracing::info!(target: "main", "Shutdown complete");
+            // Hide window instead of closing when close is requested
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Prevent the window from being destroyed
+                api.prevent_close();
+                // Hide the window instead
+                let _ = window.hide();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -153,6 +232,18 @@ pub fn run() {
             commands::remove_drive,
             commands::get_sync_status,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            match event {
+                RunEvent::ExitRequested { .. } => {
+                    tracing::info!(target: "main", "Exit requested");
+                }
+                RunEvent::Exit => {
+                    // Perform shutdown when the app is actually exiting
+                    tauri::async_runtime::block_on(shutdown());
+                }
+                _ => {}
+            }
+        });
 }
