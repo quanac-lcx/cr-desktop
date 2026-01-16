@@ -31,3 +31,8 @@ sys-locale="0"
 
 # Main sync service crate
 cloudreve-sync = { path = "../crates/cloudreve-sync" }
+
+tauri-plugin-decorum = "1.1.1"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"

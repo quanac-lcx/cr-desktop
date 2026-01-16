@@ -1,11 +1,11 @@
 use super::commands::ManagerCommand;
 use super::mounts::{DriveConfig, Mount};
+use crate::EventBroadcaster;
 use crate::drive::commands::MountCommand;
 use crate::drive::utils::{local_path_to_cr_uri, view_online_url};
 use crate::inventory::InventoryDb;
 use crate::utils::toast::send_conflict_toast;
 use anyhow::{Context, Result};
-use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,11 +35,12 @@ pub struct DriveManager {
     command_tx: mpsc::UnboundedSender<ManagerCommand>,
     command_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ManagerCommand>>>>,
     processor_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    event_broadcaster: Arc<EventBroadcaster>,
 }
 
 impl DriveManager {
     /// Create a new DriveManager instance
-    pub fn new() -> Result<Self> {
+    pub fn new(event_broadcaster: Arc<EventBroadcaster>) -> Result<Self> {
         let config_dir = Self::get_config_dir()?;
 
         // Ensure config directory exists
@@ -57,6 +58,7 @@ impl DriveManager {
             command_tx,
             command_rx: Arc::new(Mutex::new(Some(command_rx))),
             processor_handle: Arc::new(Mutex::new(None)),
+            event_broadcaster: event_broadcaster,
         })
     }
 
@@ -81,6 +83,7 @@ impl DriveManager {
 
         if !config_file.exists() {
             tracing::info!(target: "drive", "No existing drive config found, starting fresh");
+            self.event_broadcaster.no_drive();
             return Ok(());
         }
 
@@ -99,6 +102,10 @@ impl DriveManager {
                 .await
                 .context(format!("Failed to add drive: {}", id))?;
             count += 1;
+        }
+
+        if count == 0 {
+            self.event_broadcaster.no_drive();
         }
 
         tracing::info!(target: "drive", count = count, "Loaded drive(s) from config");

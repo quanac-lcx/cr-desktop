@@ -5,11 +5,12 @@ use tauri::{
     async_runtime::spawn,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent,
+    AppHandle, Manager, RunEvent,
 };
-use tokio::sync::OnceCell;
-
+use tauri_plugin_decorum::WebviewWindowExt;
+use tokio::sync::OnceCell; // adds helper methods to WebviewWindow
 mod commands;
+mod event_handler;
 
 #[macro_use]
 extern crate rust_i18n;
@@ -28,7 +29,7 @@ fn init_i18n() {
 /// Application state containing the drive manager and event broadcaster
 pub struct AppState {
     pub drive_manager: Arc<DriveManager>,
-    pub event_broadcaster: EventBroadcaster,
+    pub event_broadcaster: Arc<EventBroadcaster>,
     // Keep the log guard alive for the entire application lifetime
     #[allow(dead_code)]
     log_guard: LogGuard,
@@ -48,9 +49,18 @@ async fn init_sync_service(app: AppHandle) -> anyhow::Result<()> {
 
     tracing::info!(target: "main", "Starting Cloudreve Sync Service (Tauri)...");
 
+    // Initialize EventBroadcaster
+    let event_broadcaster = Arc::new(EventBroadcaster::new(100));
+    tracing::info!(target: "main", "Event broadcasting system initialized");
+
+    // Spawn event bridge to forward events to tarui
+    spawn_event_bridge(app.clone(), &event_broadcaster);
+
     // Initialize DriveManager
     tracing::info!(target: "main", "Initializing DriveManager...");
-    let drive_manager = Arc::new(DriveManager::new().context("Failed to create DriveManager")?);
+    let drive_manager = Arc::new(
+        DriveManager::new(event_broadcaster.clone()).context("Failed to create DriveManager")?,
+    );
 
     // Spawn command processor for DriveManager
     drive_manager.spawn_command_processor().await;
@@ -61,10 +71,6 @@ async fn init_sync_service(app: AppHandle) -> anyhow::Result<()> {
         .load()
         .await
         .context("Failed to load drive configurations")?;
-
-    // Initialize EventBroadcaster
-    let event_broadcaster = EventBroadcaster::new(100);
-    tracing::info!(target: "main", "Event broadcasting system initialized");
 
     // Initialize and start the shell services (context menu handler) in a separate thread
     let mut shell_service =
@@ -78,16 +84,13 @@ async fn init_sync_service(app: AppHandle) -> anyhow::Result<()> {
         tracing::info!(target: "main", "Shell services initialized successfully!");
     }
 
-    // Spawn event bridge to forward events to frontend
-    spawn_event_bridge(app.clone(), &event_broadcaster);
-
     // Broadcast initial connection status
     event_broadcaster.connection_status_changed(true);
 
     // Store the state in the global cell
     let state = AppState {
         drive_manager,
-        event_broadcaster,
+        event_broadcaster: event_broadcaster.clone(),
         log_guard,
     };
 
@@ -122,12 +125,8 @@ fn spawn_event_bridge(app_handle: AppHandle, event_broadcaster: &EventBroadcaste
         loop {
             match receiver.recv().await {
                 Ok(event) => {
-                    // Emit the event to all windows
-                    if let Err(e) = app_handle.emit("sync-event", &event) {
-                        tracing::error!(target: "events", error = %e, "Failed to emit event to frontend");
-                    } else {
-                        tracing::trace!(target: "events", event = ?event, "Event emitted to frontend");
-                    }
+                    event_handler::handle_event(&app_handle, &event);
+                    event_handler::emit_event(&app_handle, &event);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(target: "events", skipped = n, "Event receiver lagged, some events were skipped");
@@ -216,9 +215,14 @@ pub fn run() {
     init_i18n();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
+        .plugin(tauri_plugin_decorum::init())
         .setup(|app| {
             // Setup system tray
             setup_tray(app)?;
+
+            let add_drive_window = app.get_webview_window("add-drive").unwrap();
+			add_drive_window.create_overlay_titlebar().unwrap();
 
             // Spawn async setup task - this runs in the background
             // while the app continues to start

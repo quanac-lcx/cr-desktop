@@ -19,11 +19,29 @@
         "resizable": true,
         "fullscreen": false,
         "visible": false
+      },
+      {
+        "label": "add-drive",
+        "title": "Add Drive",
+        "width": 510,
+        "height": 680,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true,
+        "windowEffects":{
+          "effects": ["mica","acrylic"]
+        },
+        "decorations": false,
+        "minimizable": false
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
