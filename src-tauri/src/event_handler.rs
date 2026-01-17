@@ -1,6 +1,8 @@
 use cloudreve_sync::events::Event;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::commands::show_add_drive_window;
+
 /// Handle incoming events from the event broadcaster.
 /// Returns true if the event was handled, false otherwise.
 pub fn handle_event(app_handle: &AppHandle, event: &Event) {
@@ -13,13 +15,7 @@ pub fn handle_event(app_handle: &AppHandle, event: &Event) {
 }
 
 fn handle_no_drive(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("add-drive") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        tracing::info!(target: "events", "Opened add-drive window due to NoDrive event");
-    } else {
-        tracing::error!(target: "events", "Failed to find add-drive window");
-    }
+    show_add_drive_window(app_handle);
 }
 
 /// Emit an event to the frontend

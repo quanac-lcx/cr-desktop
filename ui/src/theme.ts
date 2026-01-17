@@ -13,6 +13,17 @@ export const applyThemeWithOverrides = (themeConfig: ThemeOptions): ThemeOptions
         styleOverrides: {
           body: {
             overscrollBehavior: "none",
+            backgroundColor: "initial",
+          },
+          img: {
+            userSelect: "none",
+          },
+        },
+      },
+      MuiTypography: {
+        styleOverrides: {
+          root: {
+            userSelect: "none",
           },
         },
       },

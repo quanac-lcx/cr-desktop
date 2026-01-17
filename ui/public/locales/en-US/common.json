@@ -4,6 +4,12 @@
     "description": "Enter your Cloudreve site URL to connect",
     "siteUrl": "Site URL",
     "siteUrlPlaceholder": "https://your-cloudreve-site.com",
-    "connect": "Connect"
+    "connect": "Connect",
+    "errors": {
+      "httpError": "HTTP error: {{status}}",
+      "apiError": "API error: {{message}}",
+      "versionTooLow": "Server version {{version}} is below minimum required {{minVersion}}",
+      "connectionFailed": "Connection failed: {{message}}"
+    }
   }
 }

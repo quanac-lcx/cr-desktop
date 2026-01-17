@@ -7,8 +7,9 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, RunEvent,
 };
-use tauri_plugin_decorum::WebviewWindowExt;
-use tokio::sync::OnceCell; // adds helper methods to WebviewWindow
+use tokio::sync::OnceCell;
+
+use crate::commands::{show_add_drive_window, show_main_window};
 mod commands;
 mod event_handler;
 
@@ -168,8 +169,15 @@ async fn shutdown() {
 fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
     // Create menu items
     let show_i = MenuItem::with_id(app, "show", t!("show").as_ref(), true, None::<&str>)?;
+    let add_drive_i = MenuItem::with_id(
+        app,
+        "add_drive",
+        t!("addNewDrive").as_ref(),
+        true,
+        None::<&str>,
+    )?;
     let quit_i = MenuItem::with_id(app, "quit", t!("quit").as_ref(), true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&show_i, &add_drive_i, &quit_i])?;
 
     // Build tray icon
     TrayIconBuilder::new()
@@ -178,11 +186,10 @@ fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
+            }
+            "add_drive" => {
+                show_add_drive_window(app);
             }
             "quit" => {
                 app.exit(0);
@@ -197,11 +204,7 @@ fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
         })
         .build(app)?;
@@ -215,14 +218,12 @@ pub fn run() {
     init_i18n();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
-        .plugin(tauri_plugin_decorum::init())
+        .plugin(tauri_plugin_frame::init())
         .setup(|app| {
             // Setup system tray
             setup_tray(app)?;
-
-            let add_drive_window = app.get_webview_window("add-drive").unwrap();
-			add_drive_window.create_overlay_titlebar().unwrap();
 
             // Spawn async setup task - this runs in the background
             // while the app continues to start
@@ -235,15 +236,6 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // Hide window instead of closing when close is requested
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Prevent the window from being destroyed
-                api.prevent_close();
-                // Hide the window instead
-                let _ = window.hide();
-            }
-        })
         .invoke_handler(tauri::generate_handler![
             commands::list_drives,
             commands::add_drive,
@@ -254,7 +246,12 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             match event {
-                RunEvent::ExitRequested { .. } => {
+                RunEvent::ExitRequested { api,code,.. } => {
+                     if code.is_none() {
+                        api.prevent_exit();
+                    } else {
+                        tracing::info!("exit code: {:?}", code);
+                    }
                     tracing::info!(target: "main", "Exit requested");
                 }
                 RunEvent::Exit => {

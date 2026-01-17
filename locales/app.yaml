@@ -56,3 +56,6 @@ quit:
 show:
   en-US: "Show"
   zh-CN: "显示"
+addNewDrive:
+  en-US: "Add new drive"
+  zh-CN: "添加新云盘"

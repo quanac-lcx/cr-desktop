@@ -4,6 +4,12 @@
     "description": "Cloudreve サイトの URL を入力して接続",
     "siteUrl": "サイト URL",
     "siteUrlPlaceholder": "https://your-cloudreve-site.com",
-    "connect": "接続"
+    "connect": "接続",
+    "errors": {
+      "httpError": "HTTP エラー: {{status}}",
+      "apiError": "API エラー: {{message}}",
+      "versionTooLow": "サーバーバージョン {{version}} は最低要件 {{minVersion}} を下回っています",
+      "connectionFailed": "接続に失敗しました: {{message}}"
+    }
   }
 }

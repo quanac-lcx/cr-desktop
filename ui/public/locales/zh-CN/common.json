@@ -4,6 +4,12 @@
     "description": "输入您的 Cloudreve 站点 URL 进行连接",
     "siteUrl": "站点 URL",
     "siteUrlPlaceholder": "https://your-cloudreve-site.com",
-    "connect": "连接"
+    "connect": "连接",
+    "errors": {
+      "httpError": "HTTP 错误：{{status}}",
+      "apiError": "API 错误：{{message}}",
+      "versionTooLow": "服务器版本 {{version}} 低于最低要求 {{minVersion}}",
+      "connectionFailed": "连接失败：{{message}}"
+    }
   }
 }
