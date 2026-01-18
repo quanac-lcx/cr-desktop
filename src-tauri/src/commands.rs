@@ -1,5 +1,6 @@
 use crate::AppStateHandle;
-use cloudreve_sync::DriveConfig;
+use chrono::{Duration, Utc};
+use cloudreve_sync::{Credentials, DriveConfig};
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 use tauri::{
@@ -8,6 +9,7 @@ use tauri::{
     AppHandle, Manager, State, WebviewUrl,
 };
 use tauri_plugin_frame::WebviewWindowExt;
+use uuid::Uuid;
 
 /// Result type for Tauri commands
 type CommandResult<T> = Result<T, String>;
@@ -21,20 +23,73 @@ pub async fn list_drives(state: State<'_, AppStateHandle>) -> CommandResult<Vec<
     Ok(app_state.drive_manager.list_drives().await)
 }
 
+#[derive(serde::Deserialize)]
+pub struct AddDriveArgs {
+    pub site_url: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub access_token_expires: u64,
+    pub refresh_token_expires: u64,
+    pub drive_name: String,
+    pub remote_path: String,
+    pub local_path: String,
+    pub user_id: String,
+}
+
 /// Add a new drive configuration
 #[tauri::command]
 pub async fn add_drive(
     state: State<'_, AppStateHandle>,
-    config: DriveConfig,
+    config: AddDriveArgs,
 ) -> CommandResult<String> {
     let app_state = state
         .get()
         .ok_or_else(|| "App not yet initialized".to_string())?;
+
+    // Generate a new UUID for the drive
+    let drive_id = Uuid::new_v4().to_string();
+
+    // Convert relative expiry times (seconds) to absolute RFC3339 timestamps
+    let now = Utc::now();
+    let access_expires = (now + Duration::seconds(config.access_token_expires as i64)).to_rfc3339();
+    let refresh_expires =
+        (now + Duration::seconds(config.refresh_token_expires as i64)).to_rfc3339();
+
+    let drive_config = DriveConfig {
+        id: drive_id,
+        name: config.drive_name,
+        instance_url: config.site_url,
+        remote_path: config.remote_path,
+        credentials: Credentials {
+            access_token: Some(config.access_token),
+            refresh_token: config.refresh_token,
+            access_expires: Some(access_expires),
+            refresh_expires,
+        },
+        sync_path: config.local_path.into(),
+        icon_path: None,
+        enabled: true,
+        user_id: config.user_id,
+        sync_root_id: None,
+        ignore_patterns: Vec::new(),
+        extra: Default::default(),
+    };
+
+    // Add drive to manager
+    let id = app_state
+        .drive_manager
+        .add_drive(drive_config)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Persist drive configurations
     app_state
         .drive_manager
-        .add_drive(config)
+        .persist()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    Ok(id)
 }
 
 /// Remove a drive by ID

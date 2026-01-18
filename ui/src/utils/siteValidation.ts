@@ -1,4 +1,5 @@
 import { fetch } from "@tauri-apps/plugin-http";
+import { CALLBACK_PATH, CLIENT_ID, CLIENT_SECRET } from "./constants";
 
 export const MIN_VERSION = "4.12.0";
 
@@ -34,6 +35,79 @@ export function compareSemver(a: string, b: string): number {
     if (numA > numB) return 1;
   }
   return 0;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+  refresh_token_expires_in: number;
+}
+
+interface TokenErrorResponse {
+  error: string;
+  error_description?: string;
+}
+
+/**
+ * Exchange authorization code for access and refresh tokens
+ * @param siteUrl - The base URL of the Cloudreve site
+ * @param code - The authorization code from OAuth callback
+ * @param pkceVerifier - The PKCE code verifier used during authorization
+ * @returns TokenResponse containing access_token, refresh_token, etc.
+ * @throws ValidationError on failure
+ */
+export async function exchangeTokens(
+  siteUrl: string,
+  code: string,
+  pkceVerifier: string
+): Promise<TokenResponse> {
+  const url = new URL("/api/v4/session/oauth/token", siteUrl);
+
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    code: code,
+    redirect_uri: CALLBACK_PATH,
+    code_verifier: pkceVerifier,
+  });
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw { type: "connectionFailed", params: { message } } as ValidationError;
+  }
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    const errorData = data as TokenErrorResponse;
+    throw {
+      type: "apiError",
+      params: {
+        message: errorData.error_description || errorData.error || "Token exchange failed",
+      },
+    } as ValidationError;
+  }
+
+  if (!("access_token" in data)) {
+    throw {
+      type: "apiError",
+      params: { message: "Invalid token response from server: " + JSON.stringify(data) },
+    } as ValidationError;
+  }
+
+  return data as TokenResponse;
 }
 
 /**

@@ -9,11 +9,24 @@
     "waitingDescription": "Complete the sign-in process in your browser to connect your drive.",
     "reopenBrowser": "Open Browser Again",
     "back": "Back",
+    "finalSetupTitle": "Final Setup",
+    "finalSetupDescription": "Choose a local folder where your cloud drive will be mounted.",
+    "localPath": "Local Path",
+    "localDriveName": "Mount Name",
+    "localPathPlaceholder": "C:\\CloudDrive",
+    "browse": "Browse",
+    "selectFolder": "Select Folder",
+    "finish": "Finish",
+    "settingUp": "We're setting things up...",
+    "successTitle": "You're all set!",
+    "openDrive": "Open {{name}}",
     "errors": {
       "httpError": "HTTP error: {{status}}",
       "apiError": "API error: {{message}}",
       "versionTooLow": "Server version {{version}} is below minimum required {{minVersion}}",
-      "connectionFailed": "Connection failed: {{message}}"
+      "connectionFailed": "Connection failed: {{message}}",
+      "stateMismatch": "Authentication failed: state mismatch. Please try again.",
+      "addDriveFailed": "Failed to add drive: {{message}}"
     }
   }
 }

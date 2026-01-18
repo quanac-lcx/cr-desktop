@@ -1,14 +1,9 @@
 /**
- * PKCE (Proof Key for Code Exchange) utilities
- * Used for OAuth 2.0 authorization code flow with PKCE
- */
-
-/**
  * Generate a cryptographically random string for use as code verifier
  * @param length - Length of the random string (default: 64)
  * @returns Random string suitable for code verifier
  */
-export function generateCodeVerifier(length: number = 64): string {
+export function randomCryptoString(length: number = 64): string {
   const charset =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
   const randomValues = new Uint8Array(length);
@@ -53,7 +48,7 @@ export async function generatePKCEPair(): Promise<{
   codeVerifier: string;
   codeChallenge: string;
 }> {
-  const codeVerifier = generateCodeVerifier();
+  const codeVerifier = randomCryptoString();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
   return { codeVerifier, codeChallenge };
 }

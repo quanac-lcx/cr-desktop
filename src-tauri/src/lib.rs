@@ -2,12 +2,10 @@ use anyhow::Context;
 use cloudreve_sync::{DriveManager, EventBroadcaster, LogConfig, LogGuard};
 use std::sync::Arc;
 use tauri::{
-    async_runtime::spawn,
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, RunEvent,
+    AppHandle, Emitter, Manager, RunEvent, async_runtime::spawn, menu::{Menu, MenuItem}, tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 };
 use tokio::sync::OnceCell;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::commands::{show_add_drive_window, show_main_window};
 mod commands;
@@ -218,13 +216,24 @@ pub fn run() {
     init_i18n();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            tracing::info!("a new app instance was opened with {argv:?} and the deep link event was already triggered");
+            if argv.len() > 1 {
+                app.emit("deeplink", argv[1].clone());
+            }
+            // when defining deep link schemes at runtime, you must also check `argv` here
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
         .plugin(tauri_plugin_frame::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Setup system tray
             setup_tray(app)?;
+
+            #[cfg(desktop)]
+            app.deep_link().register("cloudreve")?;
 
             // Spawn async setup task - this runs in the background
             // while the app continues to start

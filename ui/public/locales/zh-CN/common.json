@@ -9,11 +9,24 @@
     "waitingDescription": "请在浏览器中完成登录流程以连接您的网盘。",
     "reopenBrowser": "重新打开浏览器",
     "back": "返回",
+    "finalSetupTitle": "最终设置",
+    "finalSetupDescription": "选择一个本地文件夹作为云盘的挂载位置。",
+    "localPath": "本地路径",
+    "localDriveName": "挂载名称",
+    "localPathPlaceholder": "C:\\CloudDrive",
+    "browse": "浏览",
+    "selectFolder": "选择文件夹",
+    "finish": "完成",
+    "settingUp": "正在配置中...",
+    "successTitle": "设置完成！",
+    "openDrive": "打开 {{name}}",
     "errors": {
       "httpError": "HTTP 错误：{{status}}",
       "apiError": "API 错误：{{message}}",
       "versionTooLow": "服务器版本 {{version}} 低于最低要求 {{minVersion}}",
-      "connectionFailed": "连接失败：{{message}}"
+      "connectionFailed": "连接失败：{{message}}",
+      "stateMismatch": "认证失败：状态不匹配。请重试。",
+      "addDriveFailed": "添加失败：{{message}}"
     }
   }
 }

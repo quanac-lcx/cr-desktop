@@ -17,6 +17,8 @@ export const applyThemeWithOverrides = (themeConfig: ThemeOptions): ThemeOptions
           },
           img: {
             userSelect: "none",
+            pointerEvents: "none",
+            "-webkit-user-drag": "none",
           },
         },
       },
