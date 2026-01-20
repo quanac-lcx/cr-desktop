@@ -13,7 +13,7 @@ import "@fontsource/roboto/700.css";
 import "./i18n";
 import { createAppTheme } from "./theme";
 import AddDrive from "./pages/AddDrive";
-import Popup from "./pages/Popup";
+import Popup from "./pages/popup";
 
 function LoadingFallback() {
   return (
