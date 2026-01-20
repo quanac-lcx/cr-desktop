@@ -41,7 +41,7 @@ export default function Popup() {
     currentWindow
       .onFocusChanged(({ payload: focused }) => {
         if (!focused) {
-          //currentWindow.close();
+          currentWindow.close();
         }
       })
       .then((fn) => {
@@ -93,9 +93,8 @@ export default function Popup() {
   const handleAddDrive = async () => {
     try {
       await invoke("show_add_drive_window");
-    } catch {
-      // Command might not exist, open via other means
-      console.log("Opening add drive window");
+    } catch (error) {
+      console.error("Failed to open add drive window:", error);
     }
   };
 

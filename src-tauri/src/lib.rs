@@ -10,7 +10,7 @@ use tauri::{
 use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::sync::OnceCell;
 
-use crate::commands::{show_add_drive_window, show_main_window};
+use crate::commands::{show_add_drive_window_impl, show_main_window};
 mod commands;
 mod event_handler;
 
@@ -190,7 +190,7 @@ fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
                 show_main_window(app);
             }
             "add_drive" => {
-                show_add_drive_window(app);
+                show_add_drive_window_impl(app);
             }
             "quit" => {
                 app.exit(0);
@@ -266,6 +266,7 @@ pub fn run() {
             commands::get_status_summary,
             commands::get_file_icon,
             commands::show_file_in_explorer,
+            commands::show_add_drive_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -191,6 +191,7 @@ pub fn show_main_window(app: &AppHandle) {
         .resizable(false)
         .visible(false)
         .decorations(false)
+        .skip_taskbar(true)
         .minimizable(false)
         .build()
     {
@@ -213,8 +214,15 @@ pub async fn show_file_in_explorer(path: String) -> CommandResult<()> {
     Ok(())
 }
 
+/// Command to show the add-drive window
+#[tauri::command]
+pub async fn show_add_drive_window(app: AppHandle) -> CommandResult<()> {
+    show_add_drive_window_impl(&app);
+    Ok(())
+}
+
 /// Show or create the add-drive window
-pub fn show_add_drive_window(app: &AppHandle) {
+pub fn show_add_drive_window_impl(app: &AppHandle) {
     // Check if window already exists
     if let Some(window) = app.get_webview_window("add-drive") {
         let _ = window.show();
@@ -239,7 +247,7 @@ pub fn show_add_drive_window(app: &AppHandle) {
     .title("Add Drive")
     .inner_size(470.0, 630.0)
     .resizable(false)
-    .visible(true)
+    .visible(false)
     .transparent(true)
     .effects(effects)
     .decorations(false)
@@ -253,7 +261,9 @@ pub fn show_add_drive_window(app: &AppHandle) {
 
     match builder.build() {
         Ok(window) => {
+            let _ = window.move_window(Position::Center);
             let _ = window.create_overlay_titlebar();
+            let _ = window.show();
             let _ = window.set_focus();
         }
         Err(e) => {

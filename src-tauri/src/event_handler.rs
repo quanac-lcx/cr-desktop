@@ -1,7 +1,7 @@
 use cloudreve_sync::events::Event;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::commands::show_add_drive_window;
+use crate::commands::show_add_drive_window_impl;
 
 /// Handle incoming events from the event broadcaster.
 /// Returns true if the event was handled, false otherwise.
@@ -15,7 +15,7 @@ pub fn handle_event(app_handle: &AppHandle, event: &Event) {
 }
 
 fn handle_no_drive(app_handle: &AppHandle) {
-    show_add_drive_window(app_handle);
+    show_add_drive_window_impl(app_handle);
 }
 
 /// Emit an event to the frontend
