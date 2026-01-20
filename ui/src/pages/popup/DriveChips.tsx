@@ -1,9 +1,19 @@
-import { Box, Chip } from "@mui/material";
+import { Box, Chip, styled } from "@mui/material";
 import { Add as AddIcon } from "@mui/icons-material";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { DriveConfig } from "./types";
+
+const StyledChip = styled(Chip, {
+  shouldForwardProp: (prop) => prop !== "selected",
+})<{ selected?: boolean }>(({ theme, selected }) => ({
+  marginRight: theme.spacing(0.5),
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: selected ? "transparent" : theme.palette.divider,
+  backgroundColor: selected ? theme.palette.action.selected : "transparent",
+}));
 
 interface DriveChipsProps {
   drives: DriveConfig[];
@@ -132,15 +142,14 @@ export default function DriveChips({
           scrollbarWidth: "none",
         }}
       >
-        <Chip
+        <StyledChip
           label={t("popup.allDrives", "All")}
           size="small"
-          variant={selectedDrive === null ? "filled" : "outlined"}
+          selected={selectedDrive === null}
           onClick={() => onDriveSelect(null)}
-          sx={{ mr: 0.5 }}
         />
         {drives.map((drive) => (
-          <Chip
+          <StyledChip
             key={drive.id}
             icon={
               drive.icon_path ? (
@@ -153,9 +162,8 @@ export default function DriveChips({
             }
             label={drive.name}
             size="small"
-            variant={selectedDrive === drive.id ? "filled" : "outlined"}
+            selected={selectedDrive === drive.id}
             onClick={() => onDriveSelect(drive.id)}
-            sx={{ mr: 0.5 }}
           />
         ))}
         <Chip
