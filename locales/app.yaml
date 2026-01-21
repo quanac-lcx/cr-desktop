@@ -98,3 +98,6 @@ credentialExpiredTitle:
 credentialExpiredMessage:
   en-US: "The authorization for drive \"%{drive}\" has expired. Please re-authorize to continue syncing."
   zh-CN: "云盘 \"%{drive}\" 的授权已过期，请重新授权以继续同步。"
+userIdMismatch:
+  en-US: "The account used for reauthorization does not match the original drive owner. Please sign in with the same account."
+  zh-CN: "重新授权使用的账户与原云盘所有者不一致，请使用相同账户登录。"

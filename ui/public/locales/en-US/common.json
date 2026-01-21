@@ -20,13 +20,19 @@
     "settingUp": "We're setting things up...",
     "successTitle": "You're all set!",
     "openDrive": "Open {{name}}",
+    "close": "Close",
+    "reauthorizeTitle": "Confirm Reauthorization",
+    "reauthorizeDescription": "Click confirm to update your credentials for this drive.",
+    "reauthorizeConfirm": "Confirm",
+    "reauthorizeSuccessTitle": "Reauthorization Complete!",
     "errors": {
       "httpError": "HTTP error: {{status}}",
       "apiError": "API error: {{message}}",
       "versionTooLow": "Server version {{version}} is below minimum required {{minVersion}}",
       "connectionFailed": "Connection failed: {{message}}",
       "stateMismatch": "Authentication failed: state mismatch. Please try again.",
-      "addDriveFailed": "Failed to add drive: {{message}}"
+      "addDriveFailed": "Failed to add drive: {{message}}",
+      "userIdMismatch": "The account used for reauthorization does not match the original drive owner. Please sign in with the same account."
     }
   },
   "popup": {
@@ -53,7 +59,7 @@
     "openFolder": "Open folder",
     "openSite": "Open site",
     "reauthorize": "Reauthorize",
-    "deleteDrive": "Delete drive",
+    "deleteDrive": "Delete",
     "driveStatus": {
       "active": "Active",
       "eventPushLost": "Real time event push lost",

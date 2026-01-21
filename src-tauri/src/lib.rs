@@ -272,6 +272,7 @@ pub fn run() {
             commands::get_file_icon,
             commands::show_file_in_explorer,
             commands::show_add_drive_window,
+            commands::show_reauthorize_window,
             commands::show_settings_window,
         ])
         .build(tauri::generate_context!())

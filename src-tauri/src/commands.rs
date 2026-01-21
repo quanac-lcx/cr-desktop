@@ -36,6 +36,7 @@ pub struct AddDriveArgs {
     pub remote_path: String,
     pub local_path: String,
     pub user_id: String,
+    pub drive_id: Option<String>,
 }
 
 /// Add a new drive configuration
@@ -48,26 +49,52 @@ pub async fn add_drive(
         .get()
         .ok_or_else(|| "App not yet initialized".to_string())?;
 
-    // Generate a new UUID for the drive
-    let drive_id = Uuid::new_v4().to_string();
-
     // Convert relative expiry times (seconds) to absolute RFC3339 timestamps
     let now = Utc::now();
     let access_expires = (now + Duration::seconds(config.access_token_expires as i64)).to_rfc3339();
     let refresh_expires =
         (now + Duration::seconds(config.refresh_token_expires as i64)).to_rfc3339();
 
+    let credentials = Credentials {
+        access_token: Some(config.access_token),
+        refresh_token: config.refresh_token,
+        access_expires: Some(access_expires),
+        refresh_expires,
+    };
+
+    // If drive_id is provided, update existing drive instead of creating a new one
+    if let Some(drive_id) = config.drive_id {
+        app_state
+            .drive_manager
+            .update_drive_credentials(
+                &drive_id,
+                config.drive_name,
+                config.site_url,
+                credentials,
+                &config.user_id,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Persist drive configurations
+        app_state
+            .drive_manager
+            .persist()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        return Ok(drive_id);
+    }
+
+    // Generate a new UUID for a new drive
+    let drive_id = Uuid::new_v4().to_string();
+
     let drive_config = DriveConfig {
         id: drive_id,
         name: config.drive_name,
         instance_url: config.site_url,
         remote_path: config.remote_path,
-        credentials: Credentials {
-            access_token: Some(config.access_token),
-            refresh_token: config.refresh_token,
-            access_expires: Some(access_expires),
-            refresh_expires,
-        },
+        credentials,
         sync_path: config.local_path.into(),
         icon_path: None,
         raw_icon_path: None,
@@ -247,8 +274,29 @@ pub async fn show_add_drive_window(app: AppHandle) -> CommandResult<()> {
     Ok(())
 }
 
+/// Command to show the reauthorize window for a specific drive
+#[tauri::command]
+pub async fn show_reauthorize_window(app: AppHandle, drive_id: String, site_url: String, drive_name: String) -> CommandResult<()> {
+    show_reauthorize_window_impl(&app, &drive_id, &site_url, &drive_name);
+    Ok(())
+}
+
 /// Show or create the add-drive window
 pub fn show_add_drive_window_impl(app: &AppHandle) {
+    show_drive_window_internal(app, "Add Drive", "index.html/#/add-drive");
+}
+
+/// Show or create the reauthorize window for a specific drive
+pub fn show_reauthorize_window_impl(app: &AppHandle, drive_id: &str, site_url: &str, drive_name: &str) {
+    // URL encode the site_url to safely pass it in the route
+    let encoded_site_url = urlencoding::encode(site_url);
+    let encoded_drive_name = urlencoding::encode(drive_name);
+    let url_path = format!("index.html/#/reauthorize/{}/{}/{}", drive_id, encoded_site_url, encoded_drive_name);
+    show_drive_window_internal(app, "Reauthorize Drive", &url_path);
+}
+
+/// Internal function to show or create the add-drive/reauthorize window
+fn show_drive_window_internal(app: &AppHandle, title: &str, url_path: &str) {
     // Check if window already exists
     if let Some(window) = app.get_webview_window("add-drive") {
         let _ = window.show();
@@ -257,7 +305,7 @@ pub fn show_add_drive_window_impl(app: &AppHandle) {
         return;
     }
 
-    // Create new add-drive window with mica effect
+    // Create new window with mica effect
     let effects = WindowEffectsConfig {
         effects: vec![WindowEffect::Mica, WindowEffect::Acrylic],
         state: None,
@@ -268,9 +316,9 @@ pub fn show_add_drive_window_impl(app: &AppHandle) {
     let builder = WebviewWindowBuilder::new(
         app,
         "add-drive",
-        WebviewUrl::App("index.html/#/add-drive".into()),
+        WebviewUrl::App(url_path.into()),
     )
-    .title("Add Drive")
+    .title(title)
     .inner_size(470.0, 630.0)
     .resizable(false)
     .visible(false)
@@ -293,7 +341,7 @@ pub fn show_add_drive_window_impl(app: &AppHandle) {
             let _ = window.set_focus();
         }
         Err(e) => {
-            tracing::error!(target: "main", error = %e, "Failed to create add-drive window");
+            tracing::error!(target: "main", error = %e, "Failed to create window: {}", title);
         }
     }
 }

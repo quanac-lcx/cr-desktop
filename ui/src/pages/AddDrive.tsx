@@ -3,8 +3,9 @@ import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from '@tauri-apps/api/core';
 import confetti from "canvas-confetti";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useParams } from "react-router-dom";
 import defaultLogo from "../assets/cloudreve.svg";
 import { FilledTextField } from "../common/StyledComponent";
 import { fetchSiteIcon, isValidUrl } from "../utils/manifest";
@@ -38,6 +39,10 @@ export interface PKCESession {
   siteIcon?: string;
   state?: string;
   callbackData?: OAuthCallbackData;
+}
+
+interface AddDriveProps {
+  mode?: "add" | "reauthorize";
 }
 
 function parseDeeplinkUrl(url: string): OAuthCallbackData | null {
@@ -76,20 +81,25 @@ function buildAuthorizeUrl(siteUrl: string, codeChallenge: string, state: string
   return url.toString();
 }
 
-export default function AddDrive() {
+export default function AddDrive({ mode = "add" }: AddDriveProps) {
   const { t } = useTranslation();
-  const [siteUrl, setSiteUrl] = useState("");
+  const { driveId, siteUrl: encodedSiteUrl, driveName: driveNameQuery } = useParams<{ driveId?: string; siteUrl?: string, driveName: string }>();
+  const isReauthorize = mode === "reauthorize" && driveId && encodedSiteUrl;
+  const decodedSiteUrl = encodedSiteUrl ? decodeURIComponent(encodedSiteUrl) : "";
+
+  const [siteUrl, setSiteUrl] = useState(isReauthorize ? decodedSiteUrl : "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [logo, setLogo] = useState(defaultLogo);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
-  const [pageState, setPageState] = useState<PageState>("url_input");
+  const [pageState, setPageState] = useState<PageState>(isReauthorize ? "url_input" : "url_input");
   const [localPath, setLocalPath] = useState("");
-  const [driveName, setDriveName] = useState("");
+  const [driveName, setDriveName] = useState(driveNameQuery ? decodeURIComponent(driveNameQuery) : "");
   const lastFetchedUrl = useRef<string>("");
   const currentIconUrl = useRef<string | undefined>(undefined);
   const pkceSessionRef = useRef<PKCESession | null>(null);
+  const hasInitialized = useRef(false);
 
   // Listen for deeplink events from OAuth callback
   useEffect(() => {
@@ -115,7 +125,7 @@ export default function AddDrive() {
       pkceSessionRef.current.callbackData = callbackData;
 
       // Transition to final setup page
-      setDriveName(callbackData.name || "");
+      callbackData.name && setDriveName(callbackData.name);
       setPageState("final_setup");
     }).then((fn) => {
       unlisten = fn;
@@ -168,43 +178,35 @@ export default function AddDrive() {
     }
   }, [siteUrl]);
 
-  // Trigger confetti effect when entering success state
-  useEffect(() => {
-    if (pageState === "success") {
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-      });
-    }
-  }, [pageState]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Shared authorization logic
+  const startAuthorization = useCallback(async (urlToAuthorize: string) => {
     setLoading(true);
     setSnackbarOpen(false);
 
     try {
       // Validate site version first
-      const version = await validateSiteVersion(siteUrl);
+      const version = await validateSiteVersion(urlToAuthorize);
       console.log("Site version:", version);
 
       // Generate PKCE pair
       const { codeVerifier, codeChallenge } = await generatePKCEPair();
-      const state = randomCryptoString(32);
+      // Add "reauthorize:" prefix to state when in reauthorize mode
+      const stateValue = isReauthorize
+        ? `reauthorize:${randomCryptoString(32)}`
+        : randomCryptoString(32);
 
       // Store PKCE session data for use after OAuth redirect
       pkceSessionRef.current = {
         codeVerifier,
         codeChallenge,
-        siteUrl: siteUrl.trim(),
+        siteUrl: urlToAuthorize.trim(),
         siteVersion: version,
         siteIcon: currentIconUrl.current,
-        state: state,
+        state: stateValue,
       };
 
       // Build and open the authorization URL
-      const authUrl = buildAuthorizeUrl(siteUrl.trim(), codeChallenge, state);
+      const authUrl = buildAuthorizeUrl(urlToAuthorize.trim(), codeChallenge, stateValue);
       setAuthorizeUrl(authUrl);
       setPageState("waiting");
       await openUrl(authUrl);
@@ -219,6 +221,47 @@ export default function AddDrive() {
     } finally {
       setLoading(false);
     }
+  }, [t, isReauthorize]);
+
+  // Auto-start authorization flow when in reauthorize mode
+  useEffect(() => {
+    if (isReauthorize && !hasInitialized.current) {
+      hasInitialized.current = true;
+      // Fetch site icon for the reauthorize URL
+      fetchSiteIcon(decodedSiteUrl)
+        .then((iconUrl) => {
+          if (iconUrl) {
+            const img = new Image();
+            img.onload = () => {
+              setLogo(iconUrl);
+              currentIconUrl.current = iconUrl;
+            };
+            img.src = iconUrl;
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to fetch manifest:", err);
+        });
+
+      // Auto-start the authorization flow
+      startAuthorization(decodedSiteUrl);
+    }
+  }, [isReauthorize, decodedSiteUrl, startAuthorization]);
+
+  // Trigger confetti effect when entering success state
+  useEffect(() => {
+    if (pageState === "success") {
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+      });
+    }
+  }, [pageState]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await startAuthorization(siteUrl);
   };
 
   const handleOpenAuthorizeUrl = async () => {
@@ -288,6 +331,7 @@ export default function AddDrive() {
           local_path: localPath,
           remote_path: pkceSessionRef.current!.callbackData!.path,
           user_id: pkceSessionRef.current!.callbackData!.user_id || "",
+          drive_id: isReauthorize ? driveId : undefined,
         }
       });
       // Success - switch to success state
@@ -357,7 +401,7 @@ export default function AddDrive() {
                 fontWeight={500}
                 textAlign="center"
               >
-                {t("addDrive.successTitle")}
+                {isReauthorize ? t("addDrive.reauthorizeSuccessTitle") : t("addDrive.successTitle")}
               </Typography>
 
               <Box
@@ -369,14 +413,25 @@ export default function AddDrive() {
                   mt: 2,
                 }}
               >
-                <Button
-                  variant="contained"
-                  size="large"
-                  fullWidth
-                  onClick={handleOpenDriveAndClose}
-                >
-                  {t("addDrive.openDrive", { name: driveName })}
-                </Button>
+                {isReauthorize ? (
+                  <Button
+                    variant="contained"
+                    size="large"
+                    fullWidth
+                    onClick={() => getCurrentWindow().close()}
+                  >
+                    {t("addDrive.close")}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="contained"
+                    size="large"
+                    fullWidth
+                    onClick={handleOpenDriveAndClose}
+                  >
+                    {t("addDrive.openDrive", { name: driveName })}
+                  </Button>
+                )}
               </Box>
             </>
           ) : pageState === "setting_up" ? (
@@ -394,7 +449,7 @@ export default function AddDrive() {
               </Typography>
             </>
           ) : pageState === "final_setup" ? (
-            // Final setup state - local path input
+            // Final setup state - local path input (hidden in reauthorize mode)
             <>
               <Typography
                 sx={{ mt: 2 }}
@@ -402,7 +457,7 @@ export default function AddDrive() {
                 component="h1"
                 fontWeight={500}
               >
-                {t("addDrive.finalSetupTitle")}
+                {isReauthorize ? t("addDrive.reauthorizeTitle") : t("addDrive.finalSetupTitle")}
               </Typography>
 
               <Typography
@@ -410,7 +465,7 @@ export default function AddDrive() {
                 color="text.secondary"
                 textAlign="center"
               >
-                {t("addDrive.finalSetupDescription")}
+                {isReauthorize ? t("addDrive.reauthorizeDescription") : t("addDrive.finalSetupDescription")}
               </Typography>
 
               <Box
@@ -425,6 +480,7 @@ export default function AddDrive() {
                 }}
               >
                 <FilledTextField
+                  disabled={mode === "reauthorize"}
                   fullWidth
                   autoComplete="off"
                   label={t("addDrive.localDriveName")}
@@ -434,30 +490,32 @@ export default function AddDrive() {
                   required
                 />
 
-                <FilledTextField
-                  fullWidth
-                  autoComplete="off"
-                  label={t("addDrive.localPath")}
-                  placeholder={t("addDrive.localPathPlaceholder")}
-                  value={localPath}
-                  onChange={(e) => setLocalPath(e.target.value)}
-                  variant="filled"
-                  required
-                  slotProps={{
-                    input: {
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <Button
-                            onClick={handleBrowseFolder}
-                            size="small"
-                          >
-                            {t("addDrive.browse")}
-                          </Button>
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                />
+                {!isReauthorize && (
+                  <FilledTextField
+                    fullWidth
+                    autoComplete="off"
+                    label={t("addDrive.localPath")}
+                    placeholder={t("addDrive.localPathPlaceholder")}
+                    value={localPath}
+                    onChange={(e) => setLocalPath(e.target.value)}
+                    variant="filled"
+                    required
+                    slotProps={{
+                      input: {
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <Button
+                              onClick={handleBrowseFolder}
+                              size="small"
+                            >
+                              {t("addDrive.browse")}
+                            </Button>
+                          </InputAdornment>
+                        ),
+                      },
+                    }}
+                  />
+                )}
 
                 <Button
                   type="submit"
@@ -465,7 +523,7 @@ export default function AddDrive() {
                   size="large"
                   fullWidth
                 >
-                  {t("addDrive.finish")}
+                  {isReauthorize ? t("addDrive.reauthorizeConfirm") : t("addDrive.finish")}
                 </Button>
 
                 <Button

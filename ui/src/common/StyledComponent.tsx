@@ -1,4 +1,36 @@
-import { TextField, styled } from "@mui/material";
+import { Button, TextField, alpha, styled, type ButtonProps } from "@mui/material";
+
+export const DefaultButton = styled(({ variant, ...rest }: ButtonProps) => <Button variant={variant} {...rest} />)(
+  ({ variant, theme }) => ({
+    color: theme.palette.text.primary,
+    minHeight: theme.spacing(4),
+    "& .MuiButton-startIcon": {
+      marginLeft: 0,
+    },
+    border: variant == "outlined" ? `1px solid ${theme.palette.divider}` : "none",
+  }),
+);
+
+export const SecondaryButton = styled(Button)(({ theme }) => ({
+  color: theme.palette.text.secondary,
+  paddingLeft: theme.spacing(1.5),
+  paddingRight: theme.spacing(1.5),
+  backgroundColor: theme.palette.action.hover,
+  "&:hover": {
+    backgroundColor: theme.palette.action.focus,
+  },
+}));
+
+export const SecondaryErrorButton = styled(Button)(({ theme }) => ({
+  color: theme.palette.error.main,
+  backgroundColor: alpha(theme.palette.error.light, 0.1),
+  paddingLeft: theme.spacing(1.5),
+  paddingRight: theme.spacing(1.5),
+  "&:hover": {
+    backgroundColor: alpha(theme.palette.error.light, 0.2),
+  },
+}));
+
 
 export const FilledTextField = styled(TextField)(() => ({
   "& .Mui-disabled:before": {

@@ -3,18 +3,22 @@ import {
   Card,
   CardContent,
   Typography,
-  IconButton,
   LinearProgress,
   Button,
   Stack,
   Tooltip,
   Link,
+  Divider,
 } from "@mui/material";
 import {
   Delete as DeleteIcon,
   Refresh as RefreshIcon,
   FolderOpen as FolderOpenIcon,
-  Language as LanguageIcon,
+  LanguageRounded,
+  FolderOpenRounded,
+  Add as AddIcon,
+  DeleteOutlineRounded,
+  RefreshRounded,
 } from "@mui/icons-material";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +26,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { DriveInfo } from "./types";
+import { DefaultButton, SecondaryButton, SecondaryErrorButton } from "../../common/StyledComponent";
 
 interface DriveInfoResponse {
   id: string;
@@ -82,10 +87,13 @@ export default function DrivesSection() {
 
   const handleReauthorize = async (drive: DriveInfo) => {
     try {
-      const authUrl = `${drive.instance_url}/session/authorize`;
-      await openUrl(authUrl);
+      await invoke("show_reauthorize_window", {
+        driveId: drive.id,
+        siteUrl: drive.instance_url,
+        driveName: drive.name,
+      });
     } catch (error) {
-      console.error("Failed to open auth URL:", error);
+      console.error("Failed to open reauthorize window:", error);
     }
   };
 
@@ -102,6 +110,14 @@ export default function DrivesSection() {
       await openUrl(url);
     } catch (error) {
       console.error("Failed to open site:", error);
+    }
+  };
+
+  const handleAddDrive = async () => {
+    try {
+      await invoke("show_add_drive_window");
+    } catch (error) {
+      console.error("Failed to open add drive window:", error);
     }
   };
 
@@ -159,7 +175,7 @@ export default function DrivesSection() {
         <Stack spacing={2}>
           {drives.map((drive) => (
             <Card key={drive.id} variant="outlined">
-              <CardContent sx={{pb:"16px!important"}}>
+              <CardContent sx={{ pb: "16px!important" }}>
                 <Box
                   sx={{
                     display: "flex",
@@ -199,11 +215,12 @@ export default function DrivesSection() {
                       sx={{
                         display: "flex",
                         alignItems: "center",
+                        justifyContent: "space-between",
                         gap: 1,
                         mb: 1,
                       }}
                     >
-                      <Typography variant="subtitle1" fontWeight={500} noWrap>
+                      <Typography variant="body1" fontWeight={600} noWrap>
                         {drive.name}
                       </Typography>
                       <Box
@@ -222,7 +239,7 @@ export default function DrivesSection() {
                           }}
                         />
                         <Typography
-                          variant="body2"
+                          variant="caption"
                           sx={{ color: getStatusColor(drive.status) }}
                         >
                           {getStatusLabel(drive.status)}
@@ -240,12 +257,12 @@ export default function DrivesSection() {
                           mb: 0.5,
                         }}
                       >
-                        <LanguageIcon
+                        <LanguageRounded
                           sx={{ fontSize: 16, color: "text.secondary" }}
                         />
                         <Link
                           component="button"
-                          variant="body2"
+                          variant="caption"
                           color="text.secondary"
                           underline="hover"
                           onClick={() => handleOpenSite(drive.instance_url)}
@@ -271,12 +288,12 @@ export default function DrivesSection() {
                           mb: 1.5,
                         }}
                       >
-                        <FolderOpenIcon
+                        <FolderOpenRounded
                           sx={{ fontSize: 16, color: "text.secondary" }}
                         />
                         <Link
                           component="button"
-                          variant="body2"
+                          variant="caption"
                           color="text.secondary"
                           underline="hover"
                           onClick={() => handleOpenFolder(drive.sync_path)}
@@ -321,45 +338,52 @@ export default function DrivesSection() {
                       </Box>
                     )}
 
-                    {/* Action Buttons */}
-                    <Box
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        mt: 1,
-                      }}
-                    >
-                      {drive.status === "credential_expired" && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          startIcon={<RefreshIcon />}
-                          onClick={() => handleReauthorize(drive)}
-                        >
-                          {t("settings.reauthorize")}
-                        </Button>
-                      )}
-
-                      <Box sx={{ flex: 1 }} />
-
-                      <Tooltip title={t("settings.deleteDrive")}>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => handleDelete(drive.id)}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
                   </Box>
+                </Box>
+
+                {/* Action Footer */}
+                <Divider sx={{ my: 2, mx: -2 }} />
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                  }}
+                >
+                  {drive.status === "credential_expired" && (
+                    <SecondaryButton
+                      size="small"
+                      startIcon={<RefreshRounded />}
+                      onClick={() => handleReauthorize(drive)}
+                    >
+                      {t("settings.reauthorize")}
+                    </SecondaryButton>
+                  )}
+
+                  <Box sx={{ flex: 1 }} />
+
+                  <SecondaryErrorButton
+                    size="small"
+                    color="error"
+                    startIcon={<DeleteOutlineRounded />}
+                    onClick={() => handleDelete(drive.id)}
+                  >
+                    {t("settings.deleteDrive")}
+                  </SecondaryErrorButton>
                 </Box>
               </CardContent>
             </Card>
           ))}
         </Stack>
       )}
+
+      <SecondaryButton
+        startIcon={<AddIcon />}
+        onClick={handleAddDrive}
+        sx={{ mt: 2 }}
+      >
+        {t("popup.newDrive")}
+      </SecondaryButton>
     </Box>
   );
 }

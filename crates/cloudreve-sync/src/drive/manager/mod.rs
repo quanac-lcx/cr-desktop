@@ -5,7 +5,7 @@ mod types;
 pub use types::*;
 
 use crate::drive::commands::ManagerCommand;
-use crate::drive::mounts::{DriveConfig, Mount};
+use crate::drive::mounts::{Credentials, DriveConfig, Mount};
 use crate::EventBroadcaster;
 use crate::inventory::InventoryDb;
 use crate::tasks::TaskProgress;
@@ -254,6 +254,104 @@ impl DriveManager {
         //     anyhow::bail!("Drive not found: {}", id)
         // }
         Err(anyhow::anyhow!("Not implemented"))
+    }
+
+    /// Update drive credentials for reauthorization.
+    ///
+    /// This updates the name, instance_url, and credentials for an existing drive.
+    /// It also clears and re-fetches the site icon.
+    ///
+    /// # Arguments
+    /// * `id` - The drive ID to update
+    /// * `name` - New drive name
+    /// * `instance_url` - New instance URL
+    /// * `credentials` - New credentials
+    /// * `user_id` - The user ID from the new authorization (must match original)
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Drive is not found
+    /// - The user_id doesn't match the original drive's user_id
+    pub async fn update_drive_credentials(
+        &self,
+        id: &str,
+        name: String,
+        instance_url: String,
+        credentials: Credentials,
+        user_id: &str,
+    ) -> Result<()> {
+        let read_guard = self.drives.read().await;
+        let mount = read_guard
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Drive not found: {}", id))?;
+
+        // Check if user_id matches
+        {
+            let config = mount.config.read().await;
+            if config.user_id != user_id {
+                return Err(anyhow::anyhow!(t!("userIdMismatch")));
+            }
+        }
+
+        // Update the config
+        let mut config = mount.config.write().await;
+
+        // Clear old icon files if they exist
+        if let Some(ref ico_path) = config.icon_path {
+            if std::path::Path::new(ico_path).exists() {
+                if let Err(e) = std::fs::remove_file(ico_path) {
+                    tracing::warn!(target: "drive::manager", drive_id = %id, error = %e, "Failed to remove old ICO file");
+                }
+            }
+        }
+        if let Some(ref raw_path) = config.raw_icon_path {
+            if std::path::Path::new(raw_path).exists() {
+                if let Err(e) = std::fs::remove_file(raw_path) {
+                    tracing::warn!(target: "drive::manager", drive_id = %id, error = %e, "Failed to remove old raw icon file");
+                }
+            }
+        }
+
+        // Update fields
+        config.name = name;
+        config.instance_url = instance_url.clone();
+        config.credentials = credentials.clone();
+
+        // Clear icon paths - will be re-fetched
+        config.icon_path = None;
+        config.raw_icon_path = None;
+
+        // Fetch new favicon
+        match favicon::fetch_and_save_favicon(&instance_url).await {
+            Ok(result) => {
+                tracing::info!(target: "drive::manager", drive_id = %id, ico_path = %result.ico_path, raw_path = %result.raw_path, "Favicon re-fetched successfully");
+                config.icon_path = Some(result.ico_path);
+                config.raw_icon_path = Some(result.raw_path);
+            }
+            Err(e) => {
+                tracing::warn!(target: "drive::manager", drive_id = %id, error = %e, "Failed to re-fetch favicon, continuing without icon");
+            }
+        }
+
+        drop(config);
+
+        // Update the client's tokens
+        mount
+            .cr_client
+            .set_tokens_with_expiry(&cloudreve_api::models::user::Token {
+                access_token: credentials.access_token.clone().unwrap_or_default(),
+                refresh_token: credentials.refresh_token.clone(),
+                access_expires: credentials.access_expires.clone().unwrap_or_default(),
+                refresh_expires: credentials.refresh_expires.clone(),
+            })
+            .await;
+
+        // Clear the credential expired flag since we got new credentials
+        mount.set_credential_expired(false).await;
+
+        tracing::info!(target: "drive::manager", drive_id = %id, "Drive credentials updated successfully");
+
+        Ok(())
     }
 
     /// Enable/disable a drive

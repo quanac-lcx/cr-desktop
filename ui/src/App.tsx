@@ -44,6 +44,7 @@ function App() {
         <HashRouter>
           <Routes>
             <Route path="/add-drive" element={<AddDrive />} />
+            <Route path="/reauthorize/:driveId/:siteUrl/:driveName" element={<AddDrive mode="reauthorize" />} />
             <Route path="/popup" element={<Popup />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
