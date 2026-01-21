@@ -1,7 +1,7 @@
 use cloudreve_sync::events::Event;
 use tauri::{AppHandle, Emitter};
 
-use crate::commands::{show_add_drive_window_impl, show_main_window};
+use crate::commands::{show_add_drive_window_impl, show_main_window, show_settings_window_impl};
 
 /// Handle incoming events from the event broadcaster.
 /// Returns true if the event was handled, false otherwise.
@@ -26,10 +26,7 @@ fn handle_open_sync_status_window(app_handle: &AppHandle) {
 }
 
 fn handle_open_settings_window(app_handle: &AppHandle) {
-    // TODO: Implement settings window
-    // For now, show a placeholder by opening the main window
-    tracing::info!(target: "events", "OpenSettingsWindow event received - settings window not yet implemented");
-    show_main_window(app_handle);
+    show_settings_window_impl(app_handle);
 }
 
 /// Emit an event to the frontend

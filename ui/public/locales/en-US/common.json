@@ -41,6 +41,27 @@
     "waiting": "Waiting...",
     "processing": "Processing..."
   },
+  "settings": {
+    "title": "Settings",
+    "drives": "Drives",
+    "general": "General",
+    "about": "About",
+    "loading": "Loading...",
+    "noDrives": "No drives configured. Add a drive to get started.",
+    "generalComingSoon": "General settings coming soon.",
+    "storage": "Storage",
+    "openFolder": "Open folder",
+    "openSite": "Open site",
+    "reauthorize": "Reauthorize",
+    "deleteDrive": "Delete drive",
+    "driveStatus": {
+      "active": "Active",
+      "syncing": "Syncing",
+      "paused": "Paused",
+      "error": "Error",
+      "credentialExpired": "Credential Expired"
+    }
+  },
   "timeAgo": {
     "justNow": "Just now",
     "minuteAgo": "{{value}} minute ago",

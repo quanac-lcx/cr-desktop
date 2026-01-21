@@ -14,6 +14,7 @@ import "./i18n";
 import { createAppTheme } from "./theme";
 import AddDrive from "./pages/AddDrive";
 import Popup from "./pages/popup";
+import Settings from "./pages/settings";
 
 function LoadingFallback() {
   return (
@@ -44,6 +45,7 @@ function App() {
           <Routes>
             <Route path="/add-drive" element={<AddDrive />} />
             <Route path="/popup" element={<Popup />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </HashRouter>
       </ThemeProvider>

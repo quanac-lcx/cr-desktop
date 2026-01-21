@@ -268,9 +268,11 @@ pub fn run() {
             commands::remove_drive,
             commands::get_sync_status,
             commands::get_status_summary,
+            commands::get_drives_info,
             commands::get_file_icon,
             commands::show_file_in_explorer,
             commands::show_add_drive_window,
+            commands::show_settings_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

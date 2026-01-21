@@ -41,6 +41,27 @@
     "waiting": "等待中...",
     "processing": "处理中..."
   },
+  "settings": {
+    "title": "设置",
+    "drives": "网盘",
+    "general": "通用",
+    "about": "关于",
+    "loading": "加载中...",
+    "noDrives": "尚未配置网盘。添加一个网盘以开始使用。",
+    "generalComingSoon": "通用设置即将推出。",
+    "storage": "存储空间",
+    "openFolder": "打开文件夹",
+    "openSite": "打开站点",
+    "reauthorize": "重新授权",
+    "deleteDrive": "删除网盘",
+    "driveStatus": {
+      "active": "活跃",
+      "syncing": "同步中",
+      "paused": "已暂停",
+      "error": "错误",
+      "credentialExpired": "凭证已过期"
+    }
+  },
   "timeAgo": {
     "justNow": "刚刚",
     "minuteAgo": "{{value}} 分钟前",

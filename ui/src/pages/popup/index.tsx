@@ -14,24 +14,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
-import { useTheme } from "@mui/material/styles";
-import logoDark from "../../assets/logo.svg";
-import logoLight from "../../assets/logo_light.svg";
 import Settings from "../../common/icons/Settings";
+import CloudreveLogo from "../../common/CloudreveLogo";
 import type { StatusSummary } from "./types";
 import DriveChips from "./DriveChips";
 import TaskItem from "./TaskItem";
 
 export default function Popup() {
   const { t } = useTranslation();
-  const theme = useTheme();
   const [summary, setSummary] = useState<StatusSummary | null>(null);
   const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const isFetchingRef = useRef(false);
-
-  // Select logo based on theme mode
-  const logo = theme.palette.mode === "dark" ? logoLight : logoDark;
 
   // Close window on blur (when it loses focus)
   useEffect(() => {
@@ -98,9 +92,12 @@ export default function Popup() {
     }
   };
 
-  const handleSettings = () => {
-    // TODO: Open settings
-    console.log("Opening settings");
+  const handleSettings = async () => {
+    try {
+      await invoke("show_settings_window");
+    } catch (error) {
+      console.error("Failed to open settings window:", error);
+    }
   };
 
   const hasActiveTasks =
@@ -140,12 +137,7 @@ export default function Popup() {
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Box
-              component="img"
-              src={logo}
-              alt="Cloudreve"
-              sx={{ height: 28 }}
-            />
+            <CloudreveLogo height={28} />
           </Box>
           <IconButton size="small" onClick={handleSettings}>
             <Settings fontSize="small" />

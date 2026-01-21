@@ -1,7 +1,7 @@
 use crate::AppStateHandle;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Utc};
-use cloudreve_sync::{Credentials, DriveConfig, StatusSummary};
+use cloudreve_sync::{Credentials, DriveConfig, DriveInfo, StatusSummary};
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 use tauri::{
@@ -143,6 +143,21 @@ pub async fn get_status_summary(
         .map_err(|e| e.to_string())
 }
 
+/// Get all drives with their status information for the settings UI
+#[tauri::command]
+pub async fn get_drives_info(
+    state: State<'_, AppStateHandle>,
+) -> CommandResult<Vec<DriveInfo>> {
+    let app_state = state
+        .get()
+        .ok_or_else(|| "App not yet initialized".to_string())?;
+    app_state
+        .drive_manager
+        .get_drives_info()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// File icon response containing base64 encoded RGBA pixel data
 #[derive(serde::Serialize)]
 pub struct FileIconResponse {
@@ -269,6 +284,55 @@ pub fn show_add_drive_window_impl(app: &AppHandle) {
         }
         Err(e) => {
             tracing::error!(target: "main", error = %e, "Failed to create add-drive window");
+        }
+    }
+}
+
+/// Command to show the settings window
+#[tauri::command]
+pub async fn show_settings_window(app: AppHandle) -> CommandResult<()> {
+    show_settings_window_impl(&app);
+    Ok(())
+}
+
+/// Show or create the settings window
+pub fn show_settings_window_impl(app: &AppHandle) {
+    // Check if window already exists
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return;
+    }
+
+    let builder = WebviewWindowBuilder::new(
+        app,
+        "settings",
+        WebviewUrl::App("index.html/#/settings".into()),
+    )
+    .title("Settings")
+    .inner_size(700.0, 500.0)
+    .min_inner_size(600.0, 400.0)
+    .visible(false)
+    .resizable(true)
+    .decorations(false)
+    .minimizable(true);
+
+    // Platform-specific: title_bar_style and hidden_title are macOS-only
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true);
+
+    match builder.build() {
+        Ok(window) => {
+            let _ = window.move_window(Position::Center);
+            let _ = window.create_overlay_titlebar();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        Err(e) => {
+            tracing::error!(target: "main", error = %e, "Failed to create settings window");
         }
     }
 }
