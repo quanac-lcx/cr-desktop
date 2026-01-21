@@ -86,10 +86,10 @@ impl DriveManager {
 
         // Add drives to manager
         let mut count = 0;
-        for (id, config) in state.drives.iter() {
+        for config in state.drives.iter() {
             self.add_drive(config.clone())
                 .await
-                .context(format!("Failed to add drive: {}", id))?;
+                .context(format!("Failed to add drive: {}", config.id))?;
             count += 1;
         }
 
@@ -112,9 +112,9 @@ impl DriveManager {
         let mut new_state = DriveState::default();
 
         // Update drive states from underlying mounts
-        for (id, mount) in write_guard.iter() {
+        for (_, mount) in write_guard.iter() {
             let config = mount.get_config().await;
-            new_state.drives.insert(id.clone(), config);
+            new_state.drives.push(config);
         }
 
         let content =

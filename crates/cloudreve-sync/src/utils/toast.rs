@@ -6,9 +6,11 @@ use win32_notif::{
     NotificationBuilder, ToastsNotifier,
     notification::{
         actions::{ActionButton, Input, input::Selection},
-        visual::{Text, text::HintStyle},
+        visual::{Image, Placement, Text, text::HintStyle},
     },
 };
+
+use crate::utils::app::get_app_root;
 
 const APP_NAME: &str = "Cloudreve.Sync";
 
@@ -38,6 +40,7 @@ pub fn send_general_text_toast(title: &str, message: &str) {
 /// Uses drive_id as the tag to prevent duplicate notifications for the same drive.
 pub fn send_token_expiry_toast(drive_id: &str, title: &str, message: &str) {
     let notifier = ToastsNotifier::new(APP_NAME).unwrap();
+    let app_root = get_app_root();
 
     let notif = NotificationBuilder::new()
         .visual(
@@ -52,6 +55,11 @@ pub fn send_token_expiry_toast(drive_id: &str, title: &str, message: &str) {
                 .with_wrap(true)
                 .with_style(HintStyle::Body),
         )
+        .visual(
+            Image::create(3, "ms-appx:///Images/warning.svg")
+                .with_placement(Placement::AppLogoOverride)
+        )
+        .with_launch("action=settings")
         .build(0, &notifier, &format!("token_expiry_{}", drive_id), "token_expiry")
         .unwrap();
 

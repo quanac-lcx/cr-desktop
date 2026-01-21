@@ -128,6 +128,7 @@ pub struct NotificationBuilder {
   duration: &'static str,
   scenario: &'static str,
   use_button_style: &'static str,
+  launch: String,  
   pub values: HashMap<String, String>,
 }
 
@@ -166,6 +167,7 @@ impl NotificationBuilder {
       duration: "",
       scenario: "",
       use_button_style: "",
+      launch: String::new(),
       values: HashMap::new(),
     }
   }
@@ -221,6 +223,11 @@ impl NotificationBuilder {
 
   pub fn value<T: Into<String>, E: Into<String>>(mut self, key: T, value: E) -> Self {
     self.values.insert(key.into(), value.into());
+    self
+  }
+
+  pub fn with_launch<T: Into<String>>(mut self, launch: T) -> Self {
+    self.launch = format!("launch=\"{}\"", launch.into());
     self
   }
 
@@ -293,7 +300,7 @@ impl NotificationBuilder {
 
     let _xml = format!(
       r#"
-      <toast {dur} {scenario} {button_style}>
+      <toast {dur} {scenario} {button_style} {launch}>
         {audio}
         {commands}
         {header}
@@ -309,7 +316,8 @@ impl NotificationBuilder {
     "#,
       dur = self.duration,
       scenario = self.scenario,
-      button_style = self.use_button_style
+      button_style = self.use_button_style,
+      launch = self.launch
     );
 
     let doc = XmlDocument::new()?;

@@ -2,19 +2,10 @@ use crate::drive::mounts::DriveConfig;
 use crate::inventory::TaskRecord;
 use crate::tasks::TaskProgress;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DriveState {
-    pub drives: HashMap<String, DriveConfig>,
-}
-
-impl Default for DriveState {
-    fn default() -> Self {
-        Self {
-            drives: HashMap::new(),
-        }
-    }
+    pub drives: Vec<DriveConfig>,
 }
 
 /// Summary of the current status including drives and recent tasks

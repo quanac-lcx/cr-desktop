@@ -1,7 +1,7 @@
 use cloudreve_sync::events::Event;
 use tauri::{AppHandle, Emitter};
 
-use crate::commands::{show_add_drive_window_impl, show_main_window, show_settings_window_impl};
+use crate::commands::{show_add_drive_window_impl, show_main_window_center, show_settings_window_impl};
 
 /// Handle incoming events from the event broadcaster.
 /// Returns true if the event was handled, false otherwise.
@@ -22,7 +22,7 @@ fn handle_no_drive(app_handle: &AppHandle) {
 
 fn handle_open_sync_status_window(app_handle: &AppHandle) {
     // Open the main popup window which shows sync status
-    show_main_window(app_handle);
+    show_main_window_center(app_handle);
 }
 
 fn handle_open_settings_window(app_handle: &AppHandle) {

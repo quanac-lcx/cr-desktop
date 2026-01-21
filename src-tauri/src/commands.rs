@@ -190,8 +190,18 @@ pub async fn get_file_icon(path: String, size: Option<u16>) -> CommandResult<Fil
     })
 }
 
-/// Show or create the main window
+/// Show or create the main window (positioned at tray center)
 pub fn show_main_window(app: &AppHandle) {
+    show_main_window_at_position(app, Position::TrayCenter);
+}
+
+/// Show or create the main window (positioned at bottom right)
+pub fn show_main_window_center(app: &AppHandle) {
+    show_main_window_at_position(app, Position::Center);
+}
+
+/// Internal function to show or create the main window at a specific position
+fn show_main_window_at_position(app: &AppHandle, position: Position) {
     // Check if window already exists
     if let Some(window) = app.get_webview_window("main_popup") {
         let _ = window.show();
@@ -212,7 +222,7 @@ pub fn show_main_window(app: &AppHandle) {
         .build()
     {
         Ok(window) => {
-            let _ = window.move_window(Position::TrayCenter);
+            let _ = window.move_window(position);
             let _ = window.show();
             let _ = window.set_focus();
         }

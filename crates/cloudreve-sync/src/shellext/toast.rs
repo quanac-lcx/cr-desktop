@@ -128,6 +128,15 @@ impl ToastActivator {
         }
     }
 
+    /// Handle the settings action to open settings window
+    fn handle_settings_action(&self, params: &HashMap<String, String>) {
+        tracing::debug!(?params, "Opening settings window from toast");
+        let command_tx = self.drive_manager.get_command_sender();
+        if let Err(e) = command_tx.send(ManagerCommand::OpenSettingsWindow) {
+            tracing::error!(error = ?e, "Failed to send OpenSettingsWindow command");
+        }
+    }
+
     /// Handle the dismiss action
     fn handle_dismiss_action(&self, params: &HashMap<String, String>) {
         tracing::debug!(?params, "Toast dismissed by user");
@@ -197,6 +206,10 @@ impl INotificationActivationCallback_Impl for ToastActivator_Impl {
             }
             "dismiss" => {
                 self.handle_dismiss_action(&toast_action.params);
+            }
+            "settings" => {
+                // Open settings window
+                self.handle_settings_action(&toast_action.params);
             }
             "" => {
                 // Empty action - foreground activation (user clicked on toast body)
