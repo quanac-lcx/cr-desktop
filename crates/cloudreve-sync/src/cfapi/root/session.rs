@@ -1,29 +1,13 @@
 use std::{
-    fs::OpenOptions,
-    mem::{self, MaybeUninit},
-    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc, Weak,
-        mpsc::{self, Sender, TryRecvError},
     },
-    thread::{self, JoinHandle},
-    time::Duration,
 };
 
-use widestring::{U16CString, U16Str};
+use widestring::U16CString;
 use windows::{
-    Win32::{
-        Foundation::{ERROR_IO_INCOMPLETE, HANDLE, WIN32_ERROR},
-        Storage::{
-            CloudFilters::{self, CF_CONNECT_FLAGS, CfConnectSyncRoot},
-            FileSystem::{
-                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OVERLAPPED, FILE_LIST_DIRECTORY,
-                FILE_NOTIFY_CHANGE_ATTRIBUTES, FILE_NOTIFY_INFORMATION, ReadDirectoryChangesW,
-            },
-        },
-        System::IO::{CancelIoEx, GetOverlappedResult},
-    },
+    Win32::Storage::CloudFilters::{self, CF_CONNECT_FLAGS, CfConnectSyncRoot},
     core::{self, PCWSTR},
 };
 

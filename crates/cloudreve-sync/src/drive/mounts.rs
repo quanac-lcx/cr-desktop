@@ -411,7 +411,6 @@ impl Mount {
             .connect(
                 &config.sync_path,
                 CallbackHandler::new(
-                    config.clone(),
                     self.command_tx.clone(),
                     self.id.clone(),
                     self.inventory.clone(),

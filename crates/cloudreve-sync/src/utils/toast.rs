@@ -10,7 +10,6 @@ use win32_notif::{
 };
 
 use crate::config::ConfigManager;
-use crate::utils::app::get_app_root;
 
 const APP_NAME: &str = "Cloudreve.Sync";
 

@@ -328,6 +328,7 @@ struct UIEvent(TypedEventHandler<IStorageProviderStatusUISource, windows_core::I
 unsafe impl Send for UIEvent {}
 
 impl UIEvent {
+    #[allow(non_snake_case)]
     pub fn Invoke(
         &self,
         source: Option<&IStorageProviderStatusUISource>,

@@ -8,7 +8,6 @@ use crate::{
     },
     drive::{
         commands::MountCommand,
-        mounts::DriveConfig,
         sync::{cloud_file_to_metadata_entry, cloud_file_to_placeholder, is_symbolic_link},
     },
     inventory::{InventoryDb, MetadataEntry},
@@ -25,7 +24,6 @@ pub struct CallbackHandler {
 
 impl CallbackHandler {
     pub fn new(
-        config: DriveConfig,
         command_tx: mpsc::UnboundedSender<MountCommand>,
         id: String,
         inventory: Arc<InventoryDb>,
@@ -73,7 +71,7 @@ impl SyncFilter for CallbackHandler {
 
     fn delete(&self, request: Request, ticket: ticket::Delete, _info: info::Delete) -> CResult<()> {
         tracing::debug!(target: "drive::mounts", id = %self.id, path = %request.path().display(), "Delete");
-        ticket.pass();
+       let _ = ticket.pass();
         Ok(())
     }
 
@@ -94,7 +92,7 @@ impl SyncFilter for CallbackHandler {
 
         match response_rx.blocking_recv() {
             Ok(Ok(())) => {
-                ticket.pass();
+                let _ = ticket.pass();
                 Ok(())
             }
             _ => Err(CloudErrorKind::Unsuccessful),

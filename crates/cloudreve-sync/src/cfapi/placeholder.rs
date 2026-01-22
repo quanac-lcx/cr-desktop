@@ -385,6 +385,7 @@ impl Default for ConvertOptions {
     }
 }
 
+#[allow(dead_code)]
 fn should_suppress_placeholder_error(err: &WindowsError) -> bool {
     let code = err.code();
     code == ERROR_FILE_NOT_FOUND.to_hresult() || code == ERROR_PATH_NOT_FOUND.to_hresult()
@@ -474,7 +475,7 @@ impl LocalFileInfo {
         };
 
         // Close the handle after use
-        unsafe { FindClose(handle) };
+        unsafe { let _ = FindClose(handle); };
 
         let pin_state = if find_data.dwFileAttributes & FILE_ATTRIBUTE_PINNED.0 != 0 {
             PinState::Pinned
