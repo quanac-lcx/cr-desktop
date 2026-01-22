@@ -1,9 +1,7 @@
 use anyhow::{Context, Result};
 use std::{
-    ffi::OsStr,
     fmt::Debug,
-    fs::{self, File},
-    io,
+    fs::File,
     mem::{self, MaybeUninit},
     ops::{Bound, Range, RangeBounds},
     os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, RawHandle},
@@ -24,20 +22,19 @@ use windows::{
                 CF_PIN_STATE, CF_PLACEHOLDER_RANGE_INFO_CLASS, CF_PLACEHOLDER_STANDARD_INFO,
                 CF_PLACEHOLDER_STATE, CF_SET_PIN_FLAGS, CF_UPDATE_FLAGS, CfCloseHandle,
                 CfConvertToPlaceholder, CfDehydratePlaceholder, CfGetPlaceholderInfo,
-                CfGetPlaceholderRangeInfo, CfGetPlaceholderStateFromFileInfo,
+                CfGetPlaceholderRangeInfo,
                 CfGetPlaceholderStateFromFindData, CfGetWin32HandleFromProtectedHandle,
                 CfHydratePlaceholder, CfOpenFileWithOplock, CfReferenceProtectedHandle,
                 CfReleaseProtectedHandle, CfRevertPlaceholder, CfSetInSyncState, CfSetPinState,
                 CfUpdatePlaceholder,
             },
             FileSystem::{
-                CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_PINNED, FILE_ATTRIBUTE_UNPINNED, FILE_FLAGS_AND_ATTRIBUTES, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_MODE, FILE_SHARE_READ, FIND_FIRST_EX_FLAGS, FindClose, FindExInfoBasic, FindExInfoStandard, FindExSearchNameMatch, FindFirstFileA, FindFirstFileExA, FindFirstFileExW, OPEN_EXISTING, WIN32_FIND_DATAA, WIN32_FIND_DATAW
+                CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_PINNED, FILE_ATTRIBUTE_UNPINNED, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, FILE_SHARE_READ, FIND_FIRST_EX_FLAGS, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, OPEN_EXISTING, WIN32_FIND_DATAW
             },
         },
     },
     core::{self, Error as WindowsError, PCWSTR},
 };
-use windows_core::{HSTRING, PCSTR};
 
 use crate::cfapi::{metadata::Metadata, usn::Usn};
 

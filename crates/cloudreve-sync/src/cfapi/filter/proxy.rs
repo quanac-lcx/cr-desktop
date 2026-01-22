@@ -79,7 +79,7 @@ pub fn callbacks<T: SyncFilter + 'static>() -> Callbacks {
 pub unsafe extern "system" fn fetch_data<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let connection_key = request.connection_key();
@@ -98,12 +98,12 @@ pub unsafe extern "system" fn fetch_data<T: SyncFilter + 'static>(
             tracing::error!(target: "cfapi::filter::proxy", "Failed to write data: {:?}", e);
         }
     }
-}
+}}
 
 pub unsafe extern "system" fn validate_data<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let connection_key = request.connection_key();
@@ -122,24 +122,24 @@ pub unsafe extern "system" fn validate_data<T: SyncFilter + 'static>(
             tracing::error!(target: "cfapi::filter::proxy", "Failed to validate data: {:?}", e);
         }
     }
-}
+}}
 
 pub unsafe extern "system" fn cancel_fetch_data<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         filter.cancel_fetch_data(
             Request::new(*info),
             info::CancelFetchData((*params).Anonymous.Cancel),
         );
     }
-}
+}}
 
 pub unsafe extern "system" fn fetch_placeholders<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let connection_key = request.connection_key();
@@ -158,48 +158,48 @@ pub unsafe extern "system" fn fetch_placeholders<T: SyncFilter + 'static>(
             tracing::error!(target: "cfapi::filter::proxy", "Failed to create placeholders: {:?}", e);
         }
     }
-}
+}}
 
 pub unsafe extern "system" fn cancel_fetch_placeholders<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         filter.cancel_fetch_placeholders(
             Request::new(*info),
             info::CancelFetchPlaceholders((*params).Anonymous.Cancel),
         );
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_file_open_completion<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         filter.opened(
             Request::new(*info),
             info::Opened((*params).Anonymous.OpenCompletion),
         );
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_file_close_completion<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         filter.closed(
             Request::new(*info),
             info::Closed((*params).Anonymous.CloseCompletion),
         );
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_dehydrate<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let connection_key = request.connection_key();
@@ -216,24 +216,24 @@ pub unsafe extern "system" fn notify_dehydrate<T: SyncFilter + 'static>(
 
         command::Dehydrate::fail(connection_key, transfer_key, e).unwrap();
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_dehydrate_completion<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         filter.dehydrated(
             Request::new(*info),
             info::Dehydrated((*params).Anonymous.DehydrateCompletion),
         );
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_delete<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let connection_key = request.connection_key();
@@ -247,24 +247,24 @@ pub unsafe extern "system" fn notify_delete<T: SyncFilter + 'static>(
 
         command::Delete::fail(connection_key, transfer_key, e).unwrap();
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_delete_completion<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         filter.deleted(
             Request::new(*info),
             info::Deleted((*params).Anonymous.DeleteCompletion),
         );
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_rename<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let connection_key = request.connection_key();
@@ -278,12 +278,12 @@ pub unsafe extern "system" fn notify_rename<T: SyncFilter + 'static>(
 
         command::Rename::fail(connection_key, transfer_key, e).unwrap();
     }
-}
+}}
 
 pub unsafe extern "system" fn notify_rename_completion<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
-) {
+) { unsafe {
     if let Some(filter) = filter_from_info::<T>(info) {
         let request = Request::new(*info);
         let info = info::Renamed(
@@ -292,11 +292,11 @@ pub unsafe extern "system" fn notify_rename_completion<T: SyncFilter + 'static>(
         );
         filter.renamed(request, info);
     }
-}
+}}
 
 unsafe fn filter_from_info<T: SyncFilter + 'static>(
     info: *const CF_CALLBACK_INFO,
-) -> Option<Arc<T>> {
+) -> Option<Arc<T>> { unsafe {
     // get the original weak arc
     let weak = Weak::from_raw((*info).CallbackContext as *mut T);
     // attempt to upgrade it to a strong arc
@@ -318,4 +318,4 @@ unsafe fn filter_from_info<T: SyncFilter + 'static>(
             None
         }
     }
-}
+}}

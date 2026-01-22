@@ -1,6 +1,6 @@
 use super::InventoryDb;
 use crate::inventory::{
-    ConflictState, FileMetadata, MetadataEntry, schema::upload_sessions::dsl as upload_sessions_dsl,
+    ConflictState, FileMetadata, MetadataEntry,
 };
 use anyhow::{Context, Result};
 use diesel::prelude::*;

@@ -1,7 +1,7 @@
 use crate::{
     cfapi::{
         filter::ticket,
-        placeholder::{LocalFileInfo, OpenOptions, PinState, UpdateOptions},
+        placeholder::{LocalFileInfo, OpenOptions, PinState},
         utility::WriteAt,
     },
     drive::{
@@ -15,7 +15,6 @@ use crate::{
     utils::toast,
 };
 use anyhow::{Context, Result};
-use base64::alphabet::URL_SAFE;
 use bytes::Bytes;
 use cloudreve_api::{
     ApiError,
@@ -40,12 +39,7 @@ use std::{
 };
 use tokio::sync::oneshot::Sender;
 use uuid::Uuid;
-use widestring::U16CString;
-use windows::Win32::{
-    Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW},
-    UI::Shell::SHCNE_ATTRIBUTES,
-};
-use windows_core::PCWSTR;
+use windows::Win32::UI::Shell::SHCNE_ATTRIBUTES;
 const PAGE_SIZE: i32 = 1000;
 
 /// Generate a unique filename by appending a counter suffix before the extension.

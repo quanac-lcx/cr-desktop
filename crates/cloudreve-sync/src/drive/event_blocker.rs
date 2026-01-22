@@ -1,5 +1,5 @@
 use notify_debouncer_full::notify::Event;
-use notify_debouncer_full::notify::event::{EventKind, ModifyKind, RenameMode};
+use notify_debouncer_full::notify::event::{EventKind, ModifyKind};
 use std::{
     collections::HashMap,
     path::PathBuf,

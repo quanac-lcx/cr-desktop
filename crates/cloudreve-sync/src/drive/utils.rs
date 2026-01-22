@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use cloudreve_api::models::uri::CrUri;
 use url::Url;
 use widestring::U16CString;
-use windows::Win32::UI::Shell::{SHCNE_ID, SHCNF_PATH, SHCNF_PATHW, SHChangeNotify};
+use windows::Win32::UI::Shell::{SHCNE_ID, SHCNF_PATHW, SHChangeNotify};
 
-use crate::{drive::mounts::DriveConfig, inventory::FileMetadata};
+use crate::drive::mounts::DriveConfig;
 
 pub fn local_path_to_cr_uri(path: PathBuf, root: PathBuf, remote_base: String) -> Result<CrUri> {
     let mut base = CrUri::new(&remote_base)?;

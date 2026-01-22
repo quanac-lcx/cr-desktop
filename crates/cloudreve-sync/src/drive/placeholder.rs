@@ -5,7 +5,7 @@ use crate::{
         placeholder_file::PlaceholderFile,
     },
     drive::utils::notify_shell_change,
-    inventory::{ConflictState, FileMetadata, InventoryDb, MetadataEntry},
+    inventory::{FileMetadata, InventoryDb, MetadataEntry},
 };
 use anyhow::{Context, Result};
 use chrono::DateTime;
@@ -13,7 +13,7 @@ use cloudreve_api::models::explorer::{FileResponse, file_type};
 use nt_time::FileTime;
 use std::{
     ffi::OsString,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 use uuid::Uuid;
@@ -26,9 +26,9 @@ use windows::{
         UI::Shell::{
             IShellItem2,
             PropertiesSystem::{
-                GPS_EXTRINSICPROPERTIESONLY, GPS_READWRITE, IPropertyStore, PROPERTYKEY,
+                GPS_EXTRINSICPROPERTIESONLY, GPS_READWRITE, IPropertyStore,
             },
-            SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR, SHCNF_PATHW, SHChangeNotify,
+            SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR,
             SHCreateItemFromParsingName,
         },
     },
@@ -320,7 +320,7 @@ impl CrPlaceholder {
                 pv.Anonymous.Anonymous.Anonymous.ulVal = E_FAIL.0 as u32;
                 PROPVARIANT::from_raw(pv)
             } else {
-                let mut pv = PROPVARIANT::default().as_raw().clone();
+                let pv = PROPVARIANT::default().as_raw().clone();
                 PROPVARIANT::from_raw(pv)
             };
 

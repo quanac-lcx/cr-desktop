@@ -2,18 +2,16 @@ use super::context_menu::*;
 use crate::drive::manager::DriveManager;
 use crate::shellext::custom_state::{CLSID_CUSTOM_STATE_HANDLER, CustomStateHandlerFactory};
 use crate::shellext::status_ui::{
-    CLSID_STATUS_UI_HANDLER, StatusUIHandlerFactory, StatusUIHandlerFactoryFactory,
+    CLSID_STATUS_UI_HANDLER, StatusUIHandlerFactoryFactory,
 };
 use crate::shellext::thumbnail::{CLSID_THUMBNAIL_PROVIDER, ThumbnailProviderFactory};
 use crate::shellext::toast::{CLSID_TOAST_ACTIVATOR, ToastActivatorFactory};
-use reqwest::cookie;
-use rust_i18n::t;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoWaitForMultipleHandles};
 use windows::Win32::System::Threading::CreateEventW;
 use windows::{
-    Win32::{Foundation::*, System::Com::*, UI::Shell::*},
+    Win32::{Foundation::*, System::Com::*},
     core::*,
 };
 

@@ -28,7 +28,6 @@ use notify_debouncer_full::notify::event::{
 };
 use notify_debouncer_full::{DebouncedEvent, notify::Event};
 use nt_time::FileTime;
-use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsString,

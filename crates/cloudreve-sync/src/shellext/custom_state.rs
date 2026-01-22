@@ -63,7 +63,7 @@ impl IStorageProviderItemPropertySource_Impl for CustomStateHandler_Impl {
             vec.push(Some(properties));
         }
 
-        if (!file_metadata.permissions.is_empty()) {
+        if !file_metadata.permissions.is_empty() {
             let permission = Boolset::from_base64(&file_metadata.permissions).map_err(|e| {
                 tracing::error!(target: "shellext::custom_state", "Failed to parse permission for path {}: {:?}", itempath, e);
                 Error::from(E_FAIL)

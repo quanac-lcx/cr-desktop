@@ -1,4 +1,4 @@
-use std::{future::Future, mem::MaybeUninit, ops::Deref, path::PathBuf, sync::Arc};
+use std::{future::Future, mem::MaybeUninit, ops::Deref, path::PathBuf};
 
 use crate::cfapi::{
     error::{CResult, CloudErrorKind},

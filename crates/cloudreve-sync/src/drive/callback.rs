@@ -4,7 +4,6 @@ use crate::{
     cfapi::{
         error::{CResult, CloudErrorKind},
         filter::{Request, SyncFilter, info, ticket},
-        placeholder::OpenOptions,
         placeholder_file::PlaceholderFile,
     },
     drive::{
@@ -14,7 +13,6 @@ use crate::{
     },
     inventory::{InventoryDb, MetadataEntry},
 };
-use cloudreve_api::models::explorer::file_type;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 

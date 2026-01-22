@@ -1,8 +1,4 @@
-use std::{
-    sync::Arc,
-    thread::{self},
-    time::Duration,
-};
+use std::sync::Arc;
 use anyhow::Result;
 use windows::Win32::Storage::CloudFilters::{CF_CONNECTION_KEY, CfDisconnectSyncRoot};
 

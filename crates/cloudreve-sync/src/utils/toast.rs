@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
-use chrono::format;
 use win32_notif::{
     NotificationBuilder, ToastsNotifier,
     notification::{

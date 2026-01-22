@@ -16,7 +16,6 @@ pub use sync_now::SyncNowCommandHandler;
 pub use view_online::ViewOnlineCommandHandler;
 
 use windows::ApplicationModel;
-use windows::Win32::Foundation::*;
 use windows::core::*;
 
 // UUID for our context menu handler - matches the C++ implementation

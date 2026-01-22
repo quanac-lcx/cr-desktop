@@ -3,7 +3,6 @@ use crate::drive::manager::{DriveManager, DriveStatusUI, SyncStatus};
 use crate::shellext::vector::create_vector;
 use crate::utils::app::{AppRoot, get_app_root};
 use std::sync::Arc;
-use windows::Foundation::Collections::{IIterable, IVector, IVectorView};
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler, Uri};
 use windows::{
     Storage::Provider::*,
