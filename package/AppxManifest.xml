@@ -30,6 +30,15 @@
   <Resources>
     <Resource Language="en-us" />
     <Resource Language="zh-cn" />
+    <Resource Language="zh-tw" />
+    <Resource Language="ja" />
+    <Resource Language="de" />
+    <Resource Language="fr" />
+    <Resource Language="es" />
+    <Resource Language="ko" />
+    <Resource Language="ru" />
+    <Resource Language="pl" />
+    <Resource Language="it" />
   </Resources>
 
   <Dependencies>

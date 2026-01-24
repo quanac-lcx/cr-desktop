@@ -19,7 +19,7 @@ i18n
     backend: {
       loadPath: "/locales/{{lng}}/{{ns}}.json",
     },
-    supportedLngs: ['en-US', 'zh-CN'],
+    supportedLngs: ['en-US', 'zh-CN', 'zh-TW', 'ja', 'de', 'fr', 'es', 'ko', 'ru', 'pl', 'it'],
     detection: {
       // Order of detection: URL query param first, then other methods
       order: ['querystring', 'navigator', 'htmlTag'],
@@ -42,6 +42,42 @@ export const languages = [
   {
     code: "zh-CN",
     displayName: "简体中文",
+  },
+  {
+    code: "zh-TW",
+    displayName: "繁體中文",
+  },
+  {
+    code: "ja",
+    displayName: "日本語",
+  },
+  {
+    code: "de",
+    displayName: "Deutsch",
+  },
+  {
+    code: "fr",
+    displayName: "Français",
+  },
+  {
+    code: "es",
+    displayName: "Español",
+  },
+  {
+    code: "ko",
+    displayName: "한국어",
+  },
+  {
+    code: "ru",
+    displayName: "Русский",
+  },
+  {
+    code: "pl",
+    displayName: "Polski",
+  },
+  {
+    code: "it",
+    displayName: "Italiano",
   },
 ];
 

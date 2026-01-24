@@ -72,9 +72,9 @@ impl IgnoreMatcher {
         }
 
         // Add default set for office temp files
-        builder.add(Glob::new("~*")?);
-        builder.add(Glob::new(".~lock.*")?);
-        builder.add(Glob::new("~*.tmp")?);
+        builder.add(Glob::new("**/~*")?);
+        builder.add(Glob::new("**/.~lock.*")?);
+        builder.add(Glob::new("**/~*.tmp")?);
 
         let globset = builder
             .build()
