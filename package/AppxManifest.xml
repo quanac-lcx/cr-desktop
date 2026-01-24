@@ -23,9 +23,14 @@
 
   <Properties>
     <DisplayName>Cloudreve</DisplayName>
-    <PublisherDisplayName>Cloudreve</PublisherDisplayName>
+    <PublisherDisplayName>abslant</PublisherDisplayName>
     <Logo>Images\StoreLogo.png</Logo>
   </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="zh-cn" />
+  </Resources>
 
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0"

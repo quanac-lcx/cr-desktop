@@ -19,6 +19,15 @@ i18n
     backend: {
       loadPath: "/locales/{{lng}}/{{ns}}.json",
     },
+    supportedLngs: ['en-US', 'zh-CN'],
+    detection: {
+      // Order of detection: URL query param first, then other methods
+      order: ['querystring', 'navigator', 'htmlTag'],
+      // Look for 'lng' in query string
+      lookupQuerystring: 'lng',
+      // Cache the detected language
+      caches: [],
+    },
   });
 
 i18n.on("languageChanged", (lng) => {
@@ -33,14 +42,6 @@ export const languages = [
   {
     code: "zh-CN",
     displayName: "简体中文",
-  },
-  {
-    code: "zh-TW",
-    displayName: "繁體中文",
-  },
-  {
-    code: "ja-JP",
-    displayName: "日本語",
   },
 ];
 

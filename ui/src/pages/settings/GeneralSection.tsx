@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { isEnabled } from "@tauri-apps/plugin-autostart";
+import { languages } from "../../i18n";
 
 interface SettingItemProps {
   title: string;
@@ -210,6 +211,7 @@ interface GeneralSettings {
   log_level: string;
   log_max_files: number;
   log_dir: string;
+  language: string | null;
 }
 
 const LOG_LEVELS = [
@@ -228,7 +230,7 @@ const MAX_FILES_OPTIONS = [
 ];
 
 export default function GeneralSection() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [autoStart, setAutoStart] = useState(true);
   const [notifyCredentialExpired, setNotifyCredentialExpired] = useState(true);
   const [notifyFileConflict, setNotifyFileConflict] = useState(true);
@@ -237,6 +239,7 @@ export default function GeneralSection() {
   const [logLevel, setLogLevel] = useState("info");
   const [logMaxFiles, setLogMaxFiles] = useState(5);
   const [logDir, setLogDir] = useState("");
+  const [language, setLanguage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -254,6 +257,7 @@ export default function GeneralSection() {
         setLogLevel(settings.log_level);
         setLogMaxFiles(settings.log_max_files);
         setLogDir(settings.log_dir);
+        setLanguage(settings.language);
       } catch (error) {
         console.error("Failed to load settings:", error);
       } finally {
@@ -349,6 +353,26 @@ export default function GeneralSection() {
     }
   };
 
+  const handleLanguageChange = async (value: string) => {
+    // "auto" means use system default (null in config)
+    const newLanguage = value === "auto" ? null : value;
+    const previousValue = language;
+    setLanguage(newLanguage);
+    try {
+      // Update backend config and rust_i18n
+      await invoke("set_language", { language: newLanguage });
+      // Update frontend i18n without refresh
+      const effectiveLanguage = newLanguage ?? navigator.language;
+      await i18n.changeLanguage(effectiveLanguage);
+    } catch (error) {
+      console.error("Failed to change language:", error);
+      setLanguage(previousValue);
+    }
+  };
+
+  // Get the current language value for the select, "auto" if null
+  const currentLanguageValue = language ?? "auto";
+
   return (
     <Box>
       <SettingsGroup title={t("settings.launchSettings")}>
@@ -365,6 +389,24 @@ export default function GeneralSection() {
           description={t("settings.fastPopupLaunchDescription")}
           checked={fastPopupLaunch}
           onChange={handleFastPopupLaunchChange}
+          disabled={loading}
+          isLast={true}
+        />
+      </SettingsGroup>
+
+      <SettingsGroup title={t("settings.languageSettings")}>
+        <SettingSelectItem
+          title={t("settings.language")}
+          description={t("settings.languageDescription")}
+          value={currentLanguageValue}
+          options={[
+            { value: "auto", label: t("settings.languageAuto") },
+            ...languages.map((lang) => ({
+              value: lang.code,
+              label: lang.displayName,
+            })),
+          ]}
+          onChange={handleLanguageChange}
           disabled={loading}
           isLast={true}
         />

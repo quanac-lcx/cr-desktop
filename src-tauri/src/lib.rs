@@ -20,13 +20,25 @@ extern crate rust_i18n;
 
 i18n!("../locales");
 
-/// Initialize i18n based on system locale
+/// Initialize i18n based on config setting or system locale
 fn init_i18n() {
     use rust_i18n::set_locale;
     use sys_locale::get_locale;
 
-    let locale = get_locale().unwrap_or_else(|| String::from("en-US"));
+    // Try to get language from config, fallback to system locale
+    let locale = ConfigManager::try_get()
+        .and_then(|cm| cm.language())
+        .unwrap_or_else(|| get_locale().unwrap_or_else(|| String::from("en-US")));
     set_locale(locale.as_str());
+}
+
+/// Get the current effective locale (from config or system)
+pub fn get_effective_locale() -> String {
+    use sys_locale::get_locale;
+
+    ConfigManager::try_get()
+        .and_then(|cm| cm.language())
+        .unwrap_or_else(|| get_locale().unwrap_or_else(|| String::from("en-US")))
 }
 
 /// Application state containing the drive manager and event broadcaster
@@ -231,7 +243,12 @@ fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize i18n
+    // Initialize config manager first so i18n can read language setting
+    if let Err(e) = ConfigManager::init() {
+        eprintln!("Failed to initialize config manager: {}", e);
+    }
+
+    // Initialize i18n (uses config language setting or falls back to system locale)
     init_i18n();
 
     tauri::Builder::default()
@@ -258,8 +275,6 @@ pub fn run() {
 
             #[cfg(desktop)]
             app.deep_link().register("cloudreve")?;
-
-            ConfigManager::init()?;
 
             // Spawn async setup task - this runs in the background
             // while the app continues to start
@@ -305,6 +320,7 @@ pub fn run() {
             commands::set_log_to_file,
             commands::set_log_level,
             commands::set_log_max_files,
+            commands::set_language,
             commands::open_log_folder,
         ])
         .build(tauri::generate_context!())

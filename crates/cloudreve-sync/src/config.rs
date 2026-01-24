@@ -60,6 +60,8 @@ pub struct AppConfig {
     pub log_level: LogLevel,
     /// Maximum number of log files to keep
     pub log_max_files: usize,
+    /// Language/locale setting (e.g., "en-US", "zh-CN"). None means use system default.
+    pub language: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -72,6 +74,7 @@ impl Default for AppConfig {
             log_to_file: true,
             log_level: LogLevel::Debug,
             log_max_files: 5,
+            language: None,
         }
     }
 }
@@ -282,6 +285,18 @@ impl ConfigManager {
     pub fn set_log_max_files(&self, max_files: usize) -> Result<()> {
         self.update(|config| {
             config.log_max_files = max_files;
+        })
+    }
+
+    /// Get the language setting
+    pub fn language(&self) -> Option<String> {
+        self.config.read().ok().and_then(|c| c.language.clone())
+    }
+
+    /// Set the language setting
+    pub fn set_language(&self, language: Option<String>) -> Result<()> {
+        self.update(|config| {
+            config.language = language;
         })
     }
 
