@@ -15,7 +15,7 @@ A Windows desktop client for [Cloudreve](https://github.com/cloudreve/Cloudreve)
 - Real-time bidirectional file synchronization
 - On-demand file hydration (files download only when accessed)
 - Windows Explorer integration (context menus, thumbnails, custom states)
-- Multiple storage provider support (S3, OneDrive, Qiniu, Upyun, local)
+- Multiple storage provider support, aligned with Cloudreve server
 - System tray application
 
 ## Prerequisites
