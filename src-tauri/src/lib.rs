@@ -265,6 +265,7 @@ pub fn run() {
         .plugin(tauri_plugin_frame::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_prevent_default::debug())
         .setup(|app| {
             #[cfg(desktop)]

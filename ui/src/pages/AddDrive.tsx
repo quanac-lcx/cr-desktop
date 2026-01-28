@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 import defaultLogo from "../assets/cloudreve.svg";
 import { FilledTextField } from "../common/StyledComponent";
+import { useIsWindows10 } from "../hooks/useIsWindows10";
 import { fetchSiteIcon, isValidUrl } from "../utils/manifest";
 import { generatePKCEPair, randomCryptoString } from "../utils/pkce";
 import {
@@ -86,6 +87,7 @@ export default function AddDrive({ mode = "add" }: AddDriveProps) {
   const { driveId, siteUrl: encodedSiteUrl, driveName: driveNameQuery } = useParams<{ driveId?: string; siteUrl?: string, driveName: string }>();
   const isReauthorize = mode === "reauthorize" && driveId && encodedSiteUrl;
   const decodedSiteUrl = encodedSiteUrl ? decodeURIComponent(encodedSiteUrl) : "";
+  const isWindows10 = useIsWindows10();
 
   const [siteUrl, setSiteUrl] = useState(isReauthorize ? decodedSiteUrl : "");
   const [loading, setLoading] = useState(false);
@@ -351,7 +353,7 @@ export default function AddDrive({ mode = "add" }: AddDriveProps) {
   }
 
   return (
-    <Container maxWidth="sm">
+    <Container maxWidth="sm" sx={{ backgroundColor: isWindows10 ? "#fff" : undefined, minHeight: "100vh" }}>
       <Box
         sx={{
           minHeight: "100vh",
