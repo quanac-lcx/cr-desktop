@@ -376,6 +376,9 @@ impl Mount {
         drop(write_guard);
         let config = self.config.read().await;
 
+        let sync_path = config.sync_path.clone();
+        ensure_sync_path_exists(&sync_path, &self.id)?;
+
         let sync_root_id = config.sync_root_id.as_ref().unwrap();
 
         // Register sync root if not registered
@@ -728,6 +731,21 @@ impl Mount {
     }
 }
 
+fn ensure_sync_path_exists(sync_path: &PathBuf, id: &str) -> Result<()> {
+    if sync_path.exists() {
+        if !sync_path.is_dir() {
+            return Err(anyhow::anyhow!(
+                "Sync path '{}' exists but is not a directory",
+                sync_path.display()
+            ));
+        }
+    } else {
+        tracing::info!(target: "drive::mounts", id = %id, path = %sync_path.display(), "Sync path does not exist, creating");
+        std::fs::create_dir_all(sync_path).context("failed to create sync path")?;
+    }
+    Ok(())
+}
+
 fn generate_sync_root_id(
     instance_url: &str,
     _account_name: &str,
@@ -758,6 +776,39 @@ fn generate_sync_root_id(
         .build();
 
     Ok(sync_root_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn ensure_sync_path_creates_directory() {
+        let mut p = env::temp_dir();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        p.push(format!("cr_test_sync_{}", nanos));
+        if p.exists() {
+            std::fs::remove_dir_all(&p).unwrap();
+        }
+        assert!(!p.exists());
+        ensure_sync_path_exists(&p, "testid").unwrap();
+        assert!(p.exists() && p.is_dir());
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    #[test]
+    fn ensure_sync_path_existing_file_returns_error() {
+        let mut p = env::temp_dir();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        p.push(format!("cr_test_file_{}", nanos));
+        // create a file
+        std::fs::write(&p, b"test").unwrap();
+        let res = ensure_sync_path_exists(&p, "testid");
+        assert!(res.is_err());
+        std::fs::remove_file(&p).unwrap();
+    }
 }
 
 fn resolve_task_queue_config(config: &DriveConfig) -> TaskQueueConfig {
